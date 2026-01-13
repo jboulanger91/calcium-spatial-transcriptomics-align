@@ -1,0 +1,56 @@
+name: stx-py310
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - pip
+
+  # numerics & IO
+  - numpy
+  - scipy
+  - pandas
+  - h5py
+  - pyarrow
+  - tifffile
+  - imageio
+  - zarr
+  - dask
+  - ome-zarr
+
+  # imaging & viz
+  - scikit-image
+  - napari
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - ipykernel
+
+  # spatial transcriptomics stack
+  - anndata
+  - scanpy
+  - squidpy
+  - scikit-learn
+  - geopandas
+  - shapely
+  - rasterio
+  - pyproj
+  - rtree
+
+  # Java runtime for Bio-Formats through scyjava/JPype
+  - openjdk
+  - scyjava
+
+  # perf + dev
+  - numba
+  - blosc
+  - numcodecs
+  - black
+  - ruff
+  - pre-commit
+
+  - pip:
+      - bioio
+      - bioio-bioformats
+      - jpype1
+      - fsspec
