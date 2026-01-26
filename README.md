@@ -35,32 +35,48 @@ A lightweight **Napari pre-alignment** step is also included to quickly rotate/f
 
 ## Typical workflow
 
+### Image format conversion (OIR → TIFF)
+
+Raw imaging data were acquired in Olympus `.oir` format. Prior to any alignment or registration, all `.oir` files should be batch-converted to `.tiff` using **ImageJ/Fiji**, ensuring compatibility with downstream tools (Napari, CircuitSeeker, ANTs).
+
+#### Batch conversion using Fiji (GUI)
+
+1. Open **Fiji**
+2. Navigate to **Process → Batch → Convert…**
+3. Set:
+   - **Input**: folder containing `.oir` files
+   - **Output**: destination folder for `.tiff` files
+   - **Output format**: `TIFF`
+4. Click **OK** to start batch conversion
+
+Fiji uses the **Bio-Formats** importer by default, preserving image metadata (bit depth, channels, Z-planes). Multi-channel or multi-plane datasets are saved as multi-page TIFFs.
+
+
 ### 0) (Recommended) Pre-alignment in Napari
 Use `napari_pre-alignment.py` to make sure all stacks share the same “up” direction and left/right convention (quick rotate + flip + midline guide).
 
 This step is especially helpful if you have multiple tiles/blocks that were acquired with slightly different orientations.
 
+### 1) Visual QC of pre-aligned stacks (manual)
+
+After pre-alignment, stacks are visually inspected to identify damaged or corrupted volumes (e.g. incomplete acquisition, severe motion, missing slices).
+
+Use the script:
+
+- `annotate_damaged_sections.py`
+
+This script:
+- iterates over pre-aligned / pre-RC TIFF stacks
+- displays each stack (middle Z slice, selected channel)
+- prompts the user to mark the stack as **damaged** or **OK**
+- creates `damaged_stacks.txt` automatically if it does not exist
+- appends full paths of damaged stacks for downstream exclusion or annotation
+
+The resulting `damaged_stacks.txt` file is saved alongside the pre-aligned stacks and can be used to skip problematic volumes in later registration steps or to load them selectively for manual annotation (e.g. in Napari).
+
 ---
 
-## Option A — CircuitSeeker registration (notebook-driven)
-
-Open and run:
-
-- `multimodal_registration_example.ipynb`
-
-This notebook demonstrates a CircuitSeeker pipeline including:
-- basic preprocessing / “obvious corrections”
-- foreground detection
-- coarse alignment (moments / principal axes)
-- whole-image alignment
-- “wiggle” refinement
-- inverting displacement fields / transforms
-
-> CircuitSeeker must be installed and importable for this path.
-
----
-
-## Option B — ANTs registration (script)
+## Option A — ANTs registration (script)
 
 Use:
 
@@ -80,3 +96,24 @@ python3 tif2nii_and_register.py \
   --moving-spacing-um 0.32 0.32 1.0 \
   --out-prefix reg_ \
   --keep-nii
+  ```
+
+---
+
+## Option B — ANTs registration (script)
+
+Open and run:
+
+- `multimodal_registration_example.ipynb`
+
+This notebook demonstrates a CircuitSeeker pipeline including:
+- basic preprocessing / “obvious corrections”
+- foreground detection
+- coarse alignment (moments / principal axes)
+- whole-image alignment
+- “wiggle” refinement
+- inverting displacement fields / transforms
+
+> CircuitSeeker must be installed and importable for this path.
+
+---

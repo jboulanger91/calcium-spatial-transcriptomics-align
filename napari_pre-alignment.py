@@ -8,29 +8,29 @@ Your data model:
 
 Keys
 ----
-A / D     : -0.5° / +0.5°
-S / W     : -5°   / +5°
-Shift-F   : toggle vertical flip (top/bottom)
-X         : toggle left/right mirror about guide_x
+a / d     : -0.5° / +0.5°
+s / w     : -5°   / +5°
+Shift-f   : toggle vertical flip (top/bottom)
+x         : toggle left/right mirror about guide_x
 LEFT/RIGHT: move vertical guide line (±10 px)
-G         : auto angle from PCA mask (axis → vertical), then you can tweak
-R         : reset (angle=0, flips False, guide=center)
-N         : SAVE current stack and go to Next
-P         : go to Previous (no save unless you press N first)
-H         : print help to console
+g         : auto angle from PCA mask (axis → vertical), then you can tweak
+r         : reset (angle=0, flips False, guide=center)
+n         : SAVE current stack and go to Next
+p         : go to Previous (no save unless you press N first)
+h         : print help to console
 """
 
 import os, json
 from typing import List, Tuple
 import numpy as np
 import tifffile as tiff
-from skimage import transform, filters, morphology, exposure
+from skimage import transform
 from skimage.transform import AffineTransform, warp
 import napari
 
 # --------------------------- USER SETTINGS ---------------------------
-folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/spatial_transcriptomics/exp1_110425/oct_confocal_stacks/fish4_tifs"
-prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish4-s"
+folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2"
+prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
 indices    = list(range(1, 25+1))  # e.g. 1..25
 
 # Where to write pre-aligned stacks
@@ -91,33 +91,6 @@ def read_stack_zyxc(path: str) -> Tuple[np.ndarray, np.dtype]:
     return vol, arr.dtype
 
 
-def write_bigtiff_zyxc_pages(path: str, vol_zyxc: np.ndarray, like_dtype) -> None:
-    """
-    Write a 3D BigTIFF as Z pages, each page shaped (Y, X, C) (multi-sample, contig).
-    Preserve dtype; if intermediate is float and like_dtype is int, clip&cast, no normalization.
-    """
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    Z, Y, X, C = vol_zyxc.shape
-
-    def _cast_like(page: np.ndarray):
-        if np.issubdtype(page.dtype, np.floating) and np.issubdtype(like_dtype, np.integer):
-            info = np.iinfo(like_dtype)
-            page = np.clip(page, info.min, info.max).astype(like_dtype, copy=False)
-        else:
-            page = page.astype(like_dtype, copy=False)
-        return page
-
-    with tiff.TiffWriter(path, bigtiff=True) as tw:
-        for z in range(Z):
-            page = vol_zyxc[z]                 # (Y,X,C)
-            page = _cast_like(page)
-            # photometric=minisblack + planarconfig=contig -> scientific multi-sample, not RGB
-            tw.write(
-                data=page if C > 1 else page[..., 0],
-                photometric="minisblack",
-                planarconfig="contig",
-                contiguous=True,
-            )
 
 
 # ============================ Utils ==================================
@@ -338,11 +311,32 @@ class PreAlignApp:
         # apply to whole stack
         vol_tx = rotate_and_flip_volume_zyxc(self.current_stack, self.angle, self.flip_tb, self.flip_lr, self.guide_x)
 
-        # write Z pages (Y,X,C)
+        # write Z pages (Y,X,C) inline (no separate helper)
         os.makedirs(out_dir, exist_ok=True)
         out_name = os.path.splitext(base)[0] + out_suffix
         out_path = os.path.join(out_dir, out_name)
-        write_bigtiff_zyxc_pages(out_path, vol_tx, like_dtype=self.current_dtype)
+
+        Z, Y, X, C = vol_tx.shape
+
+        def _cast_like(page: np.ndarray):
+            like_dtype = self.current_dtype
+            if np.issubdtype(page.dtype, np.floating) and np.issubdtype(like_dtype, np.integer):
+                info = np.iinfo(like_dtype)
+                return np.clip(page, info.min, info.max).astype(like_dtype, copy=False)
+            else:
+                return page.astype(like_dtype, copy=False)
+
+        with tiff.TiffWriter(out_path, bigtiff=True) as tw:
+            for z in range(Z):
+                page = vol_tx[z]                 # (Y,X,C)
+                page = _cast_like(page)
+                tw.write(
+                    data=page if C > 1 else page[..., 0],
+                    photometric="minisblack",
+                    planarconfig="contig",
+                    contiguous=True,
+                )
+
         print(f"[save] wrote: {out_path}")
 
     # --- navigation ---
