@@ -14,8 +14,11 @@ A lightweight **Napari pre-alignment** step is also included to quickly rotate/f
 - `napari_pre-alignment.py`  
   Interactive Napari tool to pre-align stacks (rotate/flip + guide line) and save corrected TIFFs.
 
-- `align_many_from_center2D_CC-Mattes_with-prealignment.py`  
-  Sequential “montage” alignment for a series of already pre-aligned stacks:
+- `annotate_damaged_sections.py`  
+  Generate a PDF QC report over pre-aligned stacks, highlighting damaged sections and the longest consecutive clean run.
+
+- `montage_register_prealigned.py`  
+  Sequential montage construction for a series of already pre-aligned stacks:
   - loads each stack as `(Z, Y, X, C)`
   - registers the **middle Z slice** (channel 0) of stack *i* to stack *i-1*
   - applies the same 2D rigid transform to **all slices/channels** of stack *i*
@@ -57,22 +60,40 @@ Use `napari_pre-alignment.py` to make sure all stacks share the same “up” di
 
 This step is especially helpful if you have multiple tiles/blocks that were acquired with slightly different orientations.
 
-### 1) Visual QC of pre-aligned stacks (manual)
+### 1) Visual QC of pre-aligned stacks (PDF report)
 
-After pre-alignment, stacks are visually inspected to identify damaged or corrupted volumes (e.g. incomplete acquisition, severe motion, missing slices).
+After pre-alignment, stacks are reviewed using a lightweight, non-interactive QC report to identify damaged or corrupted volumes (e.g. incomplete acquisition, severe motion, missing slices).
 
-Use the script:
+Use:
 
 - `annotate_damaged_sections.py`
 
 This script:
-- iterates over pre-aligned / pre-RC TIFF stacks
-- displays each stack (middle Z slice, selected channel)
-- prompts the user to mark the stack as **damaged** or **OK**
+- scans all pre-aligned / pre-RC TIFF stacks in a folder
+- generates a multi-page PDF showing a thumbnail (middle Z slice, selected channel) for each stack
+- overlays **red shading** on stacks listed in `damaged_stacks.txt`
+- automatically identifies and highlights the **longest consecutive stretch of non-damaged sections** (yellow outline)
 - creates `damaged_stacks.txt` automatically if it does not exist
-- appends full paths of damaged stacks for downstream exclusion or annotation
 
-The resulting `damaged_stacks.txt` file is saved alongside the pre-aligned stacks and can be used to skip problematic volumes in later registration steps or to load them selectively for manual annotation (e.g. in Napari).
+The output `damaged_sections_report.pdf` is saved alongside the stacks and provides a compact visual summary of data quality and usable section ranges.
+
+### 2) Montage construction from clean sections
+
+Use:
+
+- `montage_register_prealigned.py`
+
+This script:
+- loads pre-aligned stacks as `(Z, Y, X, C)`
+- parses section indices from filenames (e.g. `fish2-s1-10`)
+- skips sections listed as damaged in `damaged_stacks.txt`
+- automatically selects the **longest consecutive run of non-damaged sections**
+- registers each stack to the previous one using 2D rigid alignment on the middle Z slice (channel 0)
+- applies the resulting transform to all Z slices and channels
+- concatenates aligned stacks into a single 3D volume
+- optionally trims edge Z slices per stack to hide seams
+
+This produces a single montaged volume and a QC image of aligned center slices.
 
 ---
 

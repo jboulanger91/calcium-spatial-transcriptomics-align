@@ -38,9 +38,9 @@ from typing import Optional, Tuple, List
 # ===================== USER SETTINGS =====================
 folder        = Path("/Users/jonathanboulanger-weill/Harvard University Dropbox/"
                      "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/"
-                     "exp1_110425/oct_confocal_stacks/benchmark_data/fish2/prealigned_rc")
+                     "exp1_110425/oct_confocal_stacks/benchmark_data/fish2/prealigned")
 prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
-input_suffix  = "_preRC.tif"          # files like: <prefix><index>_preRC.tif
+input_suffix  = "_pre.tif"          # files like: <prefix><index>_preRC.tif
 indices       = list(range(1, 25))    # inclusive range of section indices to consider
 
 damaged_list_file = os.path.join(folder, "damaged_stacks.txt")
@@ -48,11 +48,11 @@ damaged_list_file = os.path.join(folder, "damaged_stacks.txt")
 # How many Z slices to drop from each ministack before concatenation.
 # Useful to remove duplicated/low-quality edge slices at boundaries.
 # These are applied to every ministack; set to 0 to disable.
-SKIP_Z_TOP    = 6   # drop this many Z slices from the *start* of each ministack
-SKIP_Z_BOTTOM = 6   # drop this many Z slices from the *end* of each ministack
+SKIP_Z_TOP    = 7   # drop this many Z slices from the *start* of each ministack
+SKIP_Z_BOTTOM = 7   # drop this many Z slices from the *end* of each ministack
 
-# Registration choice: "CC" (fast) or "Mattes" (mutual information)
-REG_METRIC = "Mattes"                 # "CC" or "Mattes"
+# Registration choice: "CC" (slow) or "Mattes" (mutual information)
+REG_METRIC = "CC"                 # "CC" or "Mattes"
 # CC params
 DS_FACTOR     = 4
 CC_ITERS      = (300, 150, 75)
@@ -502,10 +502,10 @@ if __name__ == "__main__":
     slug = sanitize_prefix(prefix)
     tag  = metric_tag
 
-    final_out = os.path.join(folder, f"{slug}_FINAL_concat_{tag}.tif")
+    final_out = os.path.join(folder, f"{slug}_montaged_{tag}.tif")
     write_bigtiff_zyxc(final_out, master, like_dtype=base_dtype)
 
-    centers_png = os.path.join(folder, f"{slug}_aligned_centers_{tag}.png")
+    centers_png = os.path.join(folder, f"{slug}_montaged_{tag}.png")
     save_centers_figure(centers_triplets, centers_png, cols=FIG_COLS, dpi=FIG_DPI)
 
     print("[save]")

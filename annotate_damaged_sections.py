@@ -1,3 +1,25 @@
+"""
+annotate_damaged_sections.py
+
+Generate a PDF QC report for a folder of pre-aligned (pre-RC) confocal mini-stacks.
+
+For each stack, the script displays a thumbnail (middle Z slice, selected channel) and annotates:
+- Damaged stacks: semi-transparent red overlay (paths listed in damaged_stacks.txt)
+- Longest consecutive stretch of non-damaged sections: yellow border
+
+Section order is inferred from filenames containing patterns like:
+  ...fish2-s1-10.tif  -> section 10
+If no section number can be parsed, files are ordered by name.
+
+Inputs
+- pre_rc_dir: folder containing *.tif stacks
+- damaged_stacks.txt (optional): one path per line (absolute or relative). Created empty if missing.
+
+Outputs
+- damaged_sections_report.pdf saved inside pre_rc_dir
+
+No user interaction.
+"""
 from __future__ import annotations
 
 import re
@@ -9,7 +31,7 @@ import tifffile as tif
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
 
-# ---------------- user inputs ----------------
+# ---------------- user settings ----------------
 pre_rc_dir = Path(
     "/Users/jonathanboulanger-weill/Harvard University Dropbox/"
     "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/"
@@ -127,6 +149,7 @@ def longest_non_damaged_run(items: list[tuple[Path, bool]]) -> tuple[int, int]:
 
 
 def main() -> None:
+    """Write a multi-page PDF report to `out_pdf` for stacks in `pre_rc_dir`."""
     pre_rc_dir.mkdir(parents=True, exist_ok=True)
 
     # Create damaged list file if missing
