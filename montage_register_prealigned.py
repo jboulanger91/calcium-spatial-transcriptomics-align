@@ -14,6 +14,13 @@ Key ideas
 - Blocks are concatenated along Z, with optional per-block trimming (SKIP_Z_TOP/BOTTOM) to hide seams.
 - A longest consecutive run of non-damaged section indices is automatically selected for montage.
 
+Channel conventions (0-based)
+- ch0: DAPI
+- ch1: GCaMP enhanced by GFP immunostaining
+- ch2: Vglut enhanced by DsRed immunostaining
+
+Registration uses the middle Z slice from ch1 (GCaMP), which provides the strongest and most reliable signal.
+
 Inputs
 - A folder of files named: <prefix><index><input_suffix>, e.g.  ...fish2-s1-10_preRC.tif
 - damaged_stacks.txt (optional): list of stacks to skip (one path per line)
@@ -48,18 +55,24 @@ damaged_list_file = os.path.join(folder, "damaged_stacks.txt")
 # How many Z slices to drop from each ministack before concatenation.
 # Useful to remove duplicated/low-quality edge slices at boundaries.
 # These are applied to every ministack; set to 0 to disable.
-SKIP_Z_TOP    = 7   # drop this many Z slices from the *start* of each ministack
-SKIP_Z_BOTTOM = 7   # drop this many Z slices from the *end* of each ministack
+SKIP_Z_TOP    = 6   # drop this many Z slices from the *start* of each ministack
+SKIP_Z_BOTTOM = 6   # drop this many Z slices from the *end* of each ministack
 
 # Registration choice: "CC" (slow) or "Mattes" (mutual information)
-REG_METRIC = "CC"                 # "CC" or "Mattes"
+REG_METRIC = "Mattes"                 # "CC" or "Mattes"
 # CC params
 DS_FACTOR     = 4
 CC_ITERS      = (300, 150, 75)
 AFF_SAMPLING  = 256
 USE_MASKS     = True
 # Mattes params
-MI_ITERS      = (1000, 500, 250)
+MI_ITERS      = (3000, 1500, 1000)
+
+# Channel index used for registration (0-based indexing)
+# ch0: DAPI
+# ch1: GCaMP (GFP immunostaining)
+# ch2: Vglut (DsRed immunostaining)
+REG_CHANNEL = 1
 
 # Figure layout
 FIG_COLS = 6
