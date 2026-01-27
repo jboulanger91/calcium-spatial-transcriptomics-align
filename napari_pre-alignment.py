@@ -1,23 +1,37 @@
 #!/usr/bin/env python
 """
-Napari pre-alignment for rostro–caudal axis (rotate/flip + vertical midline guide).
+napari_pre_alignment.py
 
-Your data model:
-- Input: C=3, Z>1, T=1 (singleton T). We drop T and operate on (Z,Y,X,C).
-- Output: write proper 3D BigTIFF with Z pages, each page (Y,X,C).
+Interactive napari tool to pre-align rostro–caudal confocal stacks by in-plane rotation and flips,
+and to record a simple transform per stack (angle, vertical flip, left/right mirror, midline).
 
-Keys
-----
-a / d     : -0.5° / +0.5°
-s / w     : -5°   / +5°
-Shift-f   : toggle vertical flip (top/bottom)
-x         : toggle left/right mirror about guide_x
-LEFT/RIGHT: move vertical guide line (±10 px)
-g         : auto angle from PCA mask (axis → vertical), then you can tweak
-r         : reset (angle=0, flips False, guide=center)
-n         : SAVE current stack and go to Next
-p         : go to Previous (no save unless you press N first)
-h         : print help to console
+Key ideas
+- Input stacks are already roughly oriented and stored as multi-page TIFFs.
+- Data model: input series -> (Z, Y, X, C) with singleton T dropped; C is typically 3 channels.
+- The user adjusts a vertical midline and rotation/flip flags using keyboard shortcuts.
+- The same 2D transform (angle + flips about the midline) is applied to every Z slice and channel.
+- Each pre-aligned stack is written as a BigTIFF with Z pages, each page shaped (Y, X, C).
+- A JSON file stores per-stack decisions, so sessions are resumable and adjustments are idempotent.
+
+Inputs
+- A folder of raw stacks with names: <prefix><index>.tif
+- Optional existing rotations_rc.json DB for reloading previous choices.
+
+Outputs
+- prealigned_rc/<basename>_preRC.tif : pre-aligned stacks
+- rotations_rc.json                  : per-stack transform metadata
+
+Keyboard controls
+- a / d     : -0.5° / +0.5°
+- s / w     : -5°   / +5°
+- Shift-f   : toggle vertical flip (top/bottom)
+- x         : toggle left/right mirror about guide_x
+- LEFT/RIGHT: move vertical guide line (±10 px)
+- g         : auto angle from PCA mask (axis → vertical), then you can tweak
+- r         : reset (angle=0, flips False, guide=center)
+- n         : SAVE current stack and go to Next
+- p         : go to Previous (no save unless you press N first)
+- h         : print help to console
 """
 
 import os, json
@@ -32,7 +46,7 @@ import napari
 folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2"
 prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
 indices    = list(range(1, 25+1))  # e.g. 1..25
-
+    
 # Where to write pre-aligned stacks
 out_dir    = os.path.join(folder, "prealigned_rc")
 out_suffix = "_preRC.tif"

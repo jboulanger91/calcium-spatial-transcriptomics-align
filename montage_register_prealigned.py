@@ -1,32 +1,55 @@
 #!/usr/bin/env python
 """
-Sequential montage of pre-oriented TIFF stacks with 2D center-slice rigid alignment (T treated as Z).
+montage_register_prealigned.py
 
-- Input stacks are already prealigned & saved with `write_bigtiff_zyxc`, i.e. pages = frames, C interleaved.
-- Reads each stack as (Z,Y,X,C), registering the middle Z (ch 0) to the previous non-damaged block.
-- Applies that single 2D rigid transform to ALL (Z,C) slices of the block.
-- Concatenates full aligned blocks (optionally dropping 1st Z to hide seams).
-- Saves:
-    * {prefix_sanitized}_FINAL_concat_{metricTag}.tif
-    * {prefix_sanitized}_aligned_centers_{metricTag}.png  (QC: aligned middle-Z per block)
+Build a sequential montage from pre-aligned confocal mini-stacks (TIFF) using 2D rigid registration
+on the middle Z slice (channel 0), then apply that single 2D transform to every Z slice and every
+channel in the current block before concatenation.
 
-No flips, no user interaction. Damaged stacks are skipped.
+Key ideas
+- Input stacks are already pre-aligned for orientation (no flips/rotations here).
+- Each TIFF is read into (Z, Y, X, C). Any Time/Frame axis is folded into Z (Z := T*Z).
+- Registration is performed on the middle Z slice (channel 0) against the previous *non-damaged* block.
+- The resulting rigid transform is applied to the full 3D block (all Z) and all channels.
+- Blocks are concatenated along Z, with optional per-block trimming (SKIP_Z_TOP/BOTTOM) to hide seams.
+- A longest consecutive run of non-damaged section indices is automatically selected for montage.
+
+Inputs
+- A folder of files named: <prefix><index><input_suffix>, e.g.  ...fish2-s1-10_preRC.tif
+- damaged_stacks.txt (optional): list of stacks to skip (one path per line)
+
+Outputs
+- <prefix>_FINAL_concat_<metricTag>.tif  : concatenated aligned volume (Z pages, channels interleaved)
+- <prefix>_aligned_centers_<metricTag>.png : QC montage of aligned middle-Z slices per block
+
+No user interaction.
 """
 
-import os, sys, re
+import os
+import re
+import sys
 import numpy as np
 import tifffile as tiff
 import matplotlib.pyplot as plt
 import ants  # antspyx
+from pathlib import Path
+from typing import Optional, Tuple, List
 
 # ===================== USER SETTINGS =====================
-folder        = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/spatial_transcriptomics/exp1_110425/oct_confocal_stacks/fish4_tifs/prealigned_rc"
-prefix        = "20x-4us-1um_DAPI_GFP488_RFP594_fish4-s"
+folder        = Path("/Users/jonathanboulanger-weill/Harvard University Dropbox/"
+                     "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/"
+                     "exp1_110425/oct_confocal_stacks/benchmark_data/fish2/prealigned_rc")
+prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
 input_suffix  = "_preRC.tif"          # files like: <prefix><index>_preRC.tif
-indices       = list(range(1, 30))    # 1..29
+indices       = list(range(1, 25))    # inclusive range of section indices to consider
 
 damaged_list_file = os.path.join(folder, "damaged_stacks.txt")
-skip_dup_first    = True              # drop first Z of each appended block (except first)
+
+# How many Z slices to drop from each ministack before concatenation.
+# Useful to remove duplicated/low-quality edge slices at boundaries.
+# These are applied to every ministack; set to 0 to disable.
+SKIP_Z_TOP    = 6   # drop this many Z slices from the *start* of each ministack
+SKIP_Z_BOTTOM = 6   # drop this many Z slices from the *end* of each ministack
 
 # Registration choice: "CC" (fast) or "Mattes" (mutual information)
 REG_METRIC = "Mattes"                 # "CC" or "Mattes"
@@ -87,9 +110,6 @@ def write_bigtiff_zyxc(path, arr_zyxc, like_dtype):
 
 
 # ============================= Robust reader (T -> Z) =============================
-def _permute(a: np.ndarray, src: list[int], dst: list[int]) -> np.ndarray:
-    """np.moveaxis but for ordered groups."""
-    return np.moveaxis(a, src, dst) if src != dst else a
 
 def _from_axes(arr: np.ndarray, axes: str) -> np.ndarray:
     """
@@ -189,18 +209,7 @@ def _guess_layout(arr: np.ndarray) -> np.ndarray:
             A2 = np.transpose(A, (3,1,2,0))  # -> (Z,Y,X,C)
             return A2
 
-    # Fallback: treat pages as Z, grayscale
-    with tiff.TiffFile(BytesIO()) as _:
-        pass  # just to keep imports happy if editor complains
-
-    # Build Z from pages
-    try:
-        with tiff.TiffFile(BytesIO()) as _:
-            pass
-    except Exception:
-        pass
-    # Simpler fallback using pages:
-    # (Re-open file is cleaner, but we only have the array here; defer to outer fallback.)
+    # Fallback: unable to infer reliably from the array alone.
     raise RuntimeError("Could not guess layout from array alone.")
 
 def read_stack_ZYXC(path: str):
@@ -341,18 +350,18 @@ def save_centers_figure(centers_triplets, out_png_path, cols=6, dpi=180):
 
 # =========================== DRIVER ==================================
 if __name__ == "__main__":
-    # Ordered inputs: ...-s1_preRC.tif, ...-s2_preRC.tif, ...
-    all_paths = []
+    # Collect actual files present for the requested indices
+    present = {}
     for i in indices:
         p = os.path.join(folder, f"{prefix}{i}{input_suffix}")
         if os.path.exists(p):
-            all_paths.append((i, p))
+            present[i] = p
         else:
             print(f"⚠️ missing: {p}")
-    if not all_paths:
+    if not present:
         sys.exit("No stacks found.")
 
-    # Damaged list (skip)
+    # Damaged list (skip) - read basenames
     damaged_names = set()
     if os.path.exists(damaged_list_file):
         with open(damaged_list_file, "r") as f:
@@ -362,9 +371,47 @@ if __name__ == "__main__":
                     damaged_names.add(os.path.basename(s))
         print(f"[damaged] loaded {len(damaged_names)} entries")
     else:
-        print("[damaged] no damaged_stacks.txt found — proceeding with all available stacks")
+        print("[damaged] no damaged_stacks.txt found — proceeding with available stacks")
 
-    blocks = []            # aligned blocks, each (Z,Y,X,C) with Z := original T (or T*Z)
+    # Build list of good indices (present and not damaged)
+    good_indices = [i for i in sorted(present.keys()) if os.path.basename(present[i]) not in damaged_names]
+
+    # Find longest consecutive run of good indices
+    def longest_consecutive_run(sorted_ints):
+        best_start = best_end = None
+        cur_start = cur_end = None
+        for v in sorted_ints:
+            if cur_start is None:
+                cur_start = cur_end = v
+            elif v == cur_end + 1:
+                cur_end = v
+            else:
+                if best_start is None or (cur_end - cur_start) > (best_end - best_start):
+                    best_start, best_end = cur_start, cur_end
+                cur_start = cur_end = v
+        # finalize
+        if cur_start is not None:
+            if best_start is None or (cur_end - cur_start) > (best_end - best_start):
+                best_start, best_end = cur_start, cur_end
+        return (best_start, best_end) if best_start is not None else (None, None)
+
+    run_start, run_end = longest_consecutive_run(good_indices)
+    if run_start is None:
+        sys.exit("No non-damaged consecutive run found to montage.")
+
+    # Build all_paths only from that longest run
+    all_paths = []
+    for i in range(run_start, run_end + 1):
+        p = present.get(i)
+        if p is None:
+            # gap - should not happen because we chose consecutive run, but guard
+            print(f"[warn] expected present file for index {i} but missing")
+            continue
+        all_paths.append((i, p))
+
+    print(f"[info] Selected longest non-damaged consecutive run: {run_start}..{run_end} -> {len(all_paths)} stacks")
+
+    blocks = []            # aligned blocks, each (Z,Y,X,C) with Z := folded T/Z frames (Z := T*Z)
     centers_triplets = []  # (index, middle-Z image (0..1), basename)
     base_dtype = None
 
@@ -388,8 +435,21 @@ if __name__ == "__main__":
         moving_center = center_slice_Z0(vol).astype(np.float32)
 
         if prev_ref is None:
-            # First good block: keep as-is (no registration)
-            blocks.append(vol.astype(np.float32))
+            # First good block: keep as-is (no registration), but apply per-ministack trimming
+            first_block = vol.astype(np.float32)
+
+            z0 = int(SKIP_Z_TOP) if SKIP_Z_TOP is not None else 0
+            z1 = int(SKIP_Z_BOTTOM) if SKIP_Z_BOTTOM is not None else 0
+            z0 = max(0, z0)
+            z1 = max(0, z1)
+
+            if (z0 + z1) >= first_block.shape[0]:
+                print(f"[warn] first block would be empty after trimming: top={z0}, bottom={z1}, Z={first_block.shape[0]} — keeping untrimmed")
+                trimmed_first = first_block
+            else:
+                trimmed_first = first_block[z0: first_block.shape[0] - z1] if z1 > 0 else first_block[z0:]
+
+            blocks.append(trimmed_first)
             centers_triplets.append((i, to_float01(moving_center), name))
             prev_center = moving_center
             prev_ref    = ants.from_numpy(prev_center)
@@ -410,13 +470,20 @@ if __name__ == "__main__":
         # Apply the rigid transform to ALL (Z,C) of this block
         aligned = ants_apply_rigid_2d_to_stack(vol, fwd, fixed2d_ref=prev_ref)
 
-        # Append to master (optionally drop first Z for seam)
-        if skip_dup_first and aligned.shape[0] > 1 and len(blocks) > 0:
-            blocks.append(aligned[1:])
-            print(f"[concat] appended (skipped first Z); block shape: {aligned[1:].shape}")
-        else:
-            blocks.append(aligned)
-            print(f"[concat] appended; block shape: {aligned.shape}")
+        # Append to master (optionally trim edge Z slices to hide seams)
+        z0 = int(SKIP_Z_TOP) if SKIP_Z_TOP is not None else 0
+        z1 = int(SKIP_Z_BOTTOM) if SKIP_Z_BOTTOM is not None else 0
+        z0 = max(0, z0)
+        z1 = max(0, z1)
+
+        # Apply trimming per-ministack. Guard against over-trimming.
+        if (z0 + z1) >= aligned.shape[0]:
+            print(f"[warn] skipping block after trimming would remove all slices: top={z0}, bottom={z1}, Z={aligned.shape[0]}")
+            continue
+
+        trimmed = aligned[z0: aligned.shape[0] - z1] if z1 > 0 else aligned[z0:]
+        blocks.append(trimmed)
+        print(f"[concat] appended; trimmed Z {z0}..-{z1} -> block shape: {trimmed.shape}")
 
         # Update reference using aligned middle Z (ch0)
         aligned_center = center_slice_Z0(aligned).astype(np.float32)
