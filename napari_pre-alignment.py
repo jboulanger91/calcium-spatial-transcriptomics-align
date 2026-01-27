@@ -30,7 +30,7 @@ Keyboard controls
 - g         : auto angle from PCA mask (axis → vertical), then you can tweak
 - r         : reset (angle=0, flips False, guide=center)
 - n         : SAVE current stack and go to Next
-- p         : go to Previous (no save unless you press N first)
+- p         : go to Previous (no save unless you press n first)
 - h         : print help to console
 """
 
@@ -43,13 +43,13 @@ from skimage.transform import AffineTransform, warp
 import napari
 
 # --------------------------- USER SETTINGS ---------------------------
-folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2"
+folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2/"
 prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
 indices    = list(range(1, 25+1))  # e.g. 1..25
     
-# Where to write pre-aligned stacks
-out_dir    = os.path.join(folder, "prealigned_rc")
-out_suffix = "_preRC.tif"
+ # Where to write pre-aligned stacks
+out_dir    = os.path.join(os.path.abspath(folder), "prealigned")
+out_suffix = "_pre.tif"
 
 # Persistent transform database (per file basename)
 db_path    = os.path.join(folder, "rotations_rc.json")
@@ -62,13 +62,25 @@ def _drop_T_and_to_ZYXC(arr: np.ndarray, axes: str) -> np.ndarray:
     A = arr
     axes = (axes or "").upper()
 
-    # Drop singleton T
+    # Drop T dimension entirely by folding it into Z (T is treated as additional Z slices)
     if 'T' in axes:
         tpos = axes.index('T')
-        if A.shape[tpos] != 1:
-            raise AssertionError(f"Expected T==1, got T={A.shape[tpos]}")
-        A = np.take(A, 0, axis=tpos)
-        axes = axes.replace('T', '')
+        T = A.shape[tpos]
+        # move T next to Z (or front if Z absent)
+        if 'Z' in axes:
+            zpos = axes.index('Z')
+            A = np.moveaxis(A, tpos, zpos + 1)
+            axes = axes.replace('T', '')
+            # merge T into Z
+            new_shape = list(A.shape)
+            new_shape[zpos] *= new_shape[zpos + 1]
+            del new_shape[zpos + 1]
+            A = A.reshape(new_shape)
+            axes = axes.replace('Z', 'Z')
+        else:
+            # no Z axis: treat T as Z
+            A = np.moveaxis(A, tpos, 0)
+            axes = axes.replace('T', 'Z')
 
     # Ensure C exists
     if 'C' not in axes:
@@ -103,8 +115,6 @@ def read_stack_zyxc(path: str) -> Tuple[np.ndarray, np.dtype]:
         arr = s.asarray()
     vol = _drop_T_and_to_ZYXC(arr, axes)
     return vol, arr.dtype
-
-
 
 
 # ============================ Utils ==================================
@@ -330,26 +340,20 @@ class PreAlignApp:
         out_name = os.path.splitext(base)[0] + out_suffix
         out_path = os.path.join(out_dir, out_name)
 
+        # Write ImageJ-compatible hyperstack with explicit T and Z axes
+        # Input vol_tx has shape (Z, Y, X, C)
+        # ImageJ requires (T, Z, C, Y, X) with axes="TZCYX"
         Z, Y, X, C = vol_tx.shape
+        vol_ij = vol_tx.transpose(0, 3, 1, 2)   # (Z, C, Y, X)
+        vol_ij = vol_ij[np.newaxis, ...]        # (T=1, Z, C, Y, X)
 
-        def _cast_like(page: np.ndarray):
-            like_dtype = self.current_dtype
-            if np.issubdtype(page.dtype, np.floating) and np.issubdtype(like_dtype, np.integer):
-                info = np.iinfo(like_dtype)
-                return np.clip(page, info.min, info.max).astype(like_dtype, copy=False)
-            else:
-                return page.astype(like_dtype, copy=False)
-
-        with tiff.TiffWriter(out_path, bigtiff=True) as tw:
-            for z in range(Z):
-                page = vol_tx[z]                 # (Y,X,C)
-                page = _cast_like(page)
-                tw.write(
-                    data=page if C > 1 else page[..., 0],
-                    photometric="minisblack",
-                    planarconfig="contig",
-                    contiguous=True,
-                )
+        tiff.imwrite(
+            out_path,
+            vol_ij.astype(self.current_dtype, copy=False),
+            bigtiff=True,
+            imagej=True,
+            metadata={"axes": "TZCYX"}
+        )
 
         print(f"[save] wrote: {out_path}")
 

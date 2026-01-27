@@ -28,6 +28,7 @@ Inputs
 Outputs
 - <prefix>_FINAL_concat_<metricTag>.tif  : concatenated aligned volume (Z pages, channels interleaved)
 - <prefix>_aligned_centers_<metricTag>.png : QC montage of aligned middle-Z slices per block
+- <prefix>_FINAL_concat_<metricTag>_GCaMP_ch1.tif : GCaMP-only volume (single channel, Z pages)
 
 No user interaction.
 """
@@ -107,18 +108,32 @@ def downsample_ants(img_ants, factor=2):
     return ants.resample_image(img_ants, new_size, use_voxels=True, interp_type=1)
 
 def write_bigtiff_zyxc(path, arr_zyxc, like_dtype):
-    """Write (Z,Y,X,C) BigTIFF; no rescale; cast/clip to like_dtype."""
+    """
+    Write (Z,Y,X,C) as an ImageJ-compatible BigTIFF hyperstack with axes TZCYX.
+    Ensures ImageJ/Fiji interprets Z correctly (T=1, Z>1).
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    Z, Y, X, C = arr_zyxc.shape
-    with tiff.TiffWriter(path, bigtiff=True) as tw:
-        for z in range(Z):
-            page = arr_zyxc[z]
-            if np.issubdtype(page.dtype, np.floating) and np.issubdtype(like_dtype, np.integer):
-                info = np.iinfo(like_dtype)
-                page = np.clip(page, info.min, info.max).astype(like_dtype)
-            else:
-                page = page.astype(like_dtype, copy=False)
-            tw.write(page[..., 0] if C == 1 else page)
+
+    # Cast/clip to like_dtype without rescaling
+    arr = arr_zyxc
+    if np.issubdtype(arr.dtype, np.floating) and np.issubdtype(like_dtype, np.integer):
+        info = np.iinfo(like_dtype)
+        arr = np.clip(arr, info.min, info.max).astype(like_dtype)
+    else:
+        arr = arr.astype(like_dtype, copy=False)
+
+    # Convert (Z,Y,X,C) -> (T=1, Z, C, Y, X)
+    Z, Y, X, C = arr.shape
+    arr_ij = arr.transpose(0, 3, 1, 2)   # (Z,C,Y,X)
+    arr_ij = arr_ij[np.newaxis, ...]      # (T,Z,C,Y,X)
+
+    tiff.imwrite(
+        path,
+        arr_ij,
+        bigtiff=True,
+        imagej=True,
+        metadata={"axes": "TZCYX"}
+    )
 # ============================================
 
 
@@ -518,10 +533,21 @@ if __name__ == "__main__":
     final_out = os.path.join(folder, f"{slug}_montaged_{tag}.tif")
     write_bigtiff_zyxc(final_out, master, like_dtype=base_dtype)
 
+    # Also export GCaMP channel alone (ch1) as a single-channel BigTIFF
+    if master.shape[-1] >= 2:
+        gcamp_out = os.path.join(folder, f"{slug}_montaged_{tag}_GCaMP_ch1.tif")
+        master_gcamp = master[:, :, :, 1:2]  # keep singleton channel dim -> (Z,Y,X,1)
+        write_bigtiff_zyxc(gcamp_out, master_gcamp, like_dtype=base_dtype)
+    else:
+        gcamp_out = None
+        print("[warn] master has <2 channels; skipping GCaMP export")
+
     centers_png = os.path.join(folder, f"{slug}_montaged_{tag}.png")
     save_centers_figure(centers_triplets, centers_png, cols=FIG_COLS, dpi=FIG_DPI)
 
     print("[save]")
     print(" ", final_out)
+    if gcamp_out is not None:
+        print(" ", gcamp_out)
     print(" ", centers_png)
     print("✅ Done.")

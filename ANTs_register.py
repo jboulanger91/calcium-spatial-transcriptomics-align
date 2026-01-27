@@ -1,9 +1,70 @@
 #!/usr/bin/env python3
+"""
+ANTs_register.py
+
+Convert 3D TIFF image stacks to NIfTI and register them using ANTs (antsRegistration).
+
+This script is intended for registering volumetric imaging stacks of the same modality
+(e.g. GCaMP → GCaMP) using a multi-stage ANTs pipeline:
+Rigid (MI) → Affine (MI) → SyN (CC).
+
+Key requirements and assumptions
+--------------------------------
+1) Correct pixel/voxel resolution is critical.
+   ANTs optimizes registration in *physical space* (millimeters), not pixel space.
+   Therefore, voxel spacing must be correct for both fixed and moving images.
+   This script explicitly sets spacing metadata during TIFF → NIfTI conversion
+   (via --*-spacing-mm or --*-spacing-um). Incorrect spacing will lead to
+   incorrect transforms even if the visual alignment appears reasonable.
+
+2) Orientation and flipping must already be correct.
+   This script does NOT handle rotations, flips, or axis reorientation.
+   It assumes both stacks are already in the same anatomical orientation
+   (e.g. rostro–caudal up, left/right consistent).
+   Any required flipping or coarse reorientation should be done upstream
+   (e.g. using a Napari-based pre-alignment step).
+
+3) TIFF stacks are converted to NIfTI for robustness.
+   While ANTs can sometimes read TIFF files directly, NIfTI (.nii/.nii.gz)
+   provides reliable handling of:
+     - voxel spacing
+     - dimensionality (3D volumes)
+     - physical coordinate metadata
+   Converting TIFF → NIfTI ensures consistent behavior across systems and
+   avoids silent metadata misinterpretation.
+
+Inputs
+------
+- Fixed TIFF stack (reference volume)
+- Moving TIFF stack (volume to be warped)
+- Explicit voxel spacing for each stack (mm or µm)
+
+Bash command example
+--------------------
+python3 ANTs_register.py \
+  --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2/prealigned/20x_4us_1um_DAPI_GFP488_RFP594_fish2_s1_montaged_MattesMI_GCaMP_ch1.tif" \
+  --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/2p_stacks/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif" \
+  --fixed-spacing-um 1 1 1.0 \
+  --moving-spacing-um 1 1 2.0\
+  --out-prefix reg_ \
+  --keep-nii
+
+Outputs
+-------
+- <out_prefix>Warped.nii.gz          : moving → fixed
+- <out_prefix>InverseWarped.nii.gz   : fixed → moving
+- <out_prefix>0GenericAffine.mat
+- <out_prefix>1Warp.nii.gz / 1InverseWarp.nii.gz
+
+No masking or cropping is applied at this stage; partial overlap is allowed.
+Masking and overlap restriction can be added in later refinement steps.
+"""
 import argparse, os, subprocess, sys, shutil, tempfile
 import SimpleITK as sitk
 import os
 os.environ["PATH"] = "/Users/jonathanboulanger-weill/Packages/install/bin:" + os.environ["PATH"]
 import ants  # antspyx
+from pathlib import Path
 
 def to_mm(sp):
     """Accept spacing as tuple in mm."""
@@ -34,32 +95,31 @@ def run_ants_registration(fixed_nii, moving_nii, out_prefix):
     cmd = [
         "antsRegistration",
         "--dimensionality", "3",
-        "--float", "0",
-        "--winsorize-image-intensities", "[0.005,0.995]",
+        "--float", "1",
+        #"--winsorize-image-intensities", "[0.005,0.995]",
         "--interpolation", "Linear",
         "--output", f"[{out_prefix},{out_prefix}Warped.nii.gz,{out_prefix}InverseWarped.nii.gz]",
-        # "--use-estimate-learning-rate-once", "1",   # <-- REMOVE THIS LINE
         "--write-composite-transform", "1",
 
         # Rigid
-        "--transform", "Rigid[0.2]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Random,0.3]",
-        "--convergence", "[1200x600x300x0,1e-8,10]",
-        "--smoothing-sigmas", "6x3x1x0mm",
+        "--transform", "Rigid[0.1]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
+        "--convergence", "[1000x500x250x300,1e-8,10]",
+        "--smoothing-sigmas", "3x2x1x0",
         "--shrink-factors", "8x4x2x1",
 
         # Affine
-        "--transform", "Affine[0.1]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
-        "--convergence", "[200x200x200x100,1e-8,10]",
-        "--smoothing-sigmas", "3x2x1x0vox",
-        "--shrink-factors", "8x4x2x1",
+        #"--transform", "Affine[0.1]",
+        #"--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
+        #"--convergence", "[1000x500x250x100,1e-8,10]",
+        #"--smoothing-sigmas", "3x2x1x0",
+        #"--shrink-factors", "8x4x2x1",
 
         # SyN
         #"--transform", "SyN[0.1,6,0]",
         #"--metric", f"CC[{fixed_nii},{moving_nii},1,2]",
         #"--convergence", "[200x200x200x100,1e-7,10]",
-        #"--smoothing-sigmas", "4x3x2x1vox",
+        #"--smoothing-sigmas", "4x3x2x1",
         #"--shrink-factors", "12x8x4x2",
     ]
     print(">> Running:", " ".join(cmd))
@@ -89,6 +149,16 @@ def main():
     if shutil.which("antsRegistration") is None:
         sys.exit("Error: antsRegistration not found in PATH.")
 
+    # Create ANTs output directory next to the fixed image
+    fixed_path = Path(args.fixed).resolve()
+    moving_path = Path(args.moving).resolve()
+
+    ants_dir = fixed_path.parent / "ANTs"
+    ants_dir.mkdir(exist_ok=True)
+
+    # Build explicit output prefix: <moving>_to_<fixed>_
+    out_prefix = ants_dir / f"{moving_path.stem}_to_{fixed_path.stem}_"
+
     # Resolve spacings
     if args.fixed_spacing_mm:
         fixed_spacing_mm = to_mm(args.fixed_spacing_mm)
@@ -115,20 +185,20 @@ def main():
 
         # Note: ANTs operates in physical space; different spacings are fine as long as they are correct.
         print(">> Running ANTs registration...")
-        run_ants_registration(fixed_nii, moving_nii, args.out_prefix)
+        run_ants_registration(fixed_nii, moving_nii, str(out_prefix))
 
         if args.keep_nii:
-            keep_dir = os.path.abspath(f"{args.out_prefix}intermediates")
+            keep_dir = ants_dir / "intermediates"
             os.makedirs(keep_dir, exist_ok=True)
-            shutil.copy(fixed_nii,  os.path.join(keep_dir, "fixed.nii.gz"))
-            shutil.copy(moving_nii, os.path.join(keep_dir, "moving.nii.gz"))
+            shutil.copy(fixed_nii,  keep_dir / "fixed.nii.gz")
+            shutil.copy(moving_nii, keep_dir / "moving.nii.gz")
             print(f">> Kept intermediates in: {keep_dir}")
 
-        print(">> Done. Key outputs with prefix:", args.out_prefix)
-        print(f"  {args.out_prefix}Warped.nii.gz        # moving → fixed")
-        print(f"  {args.out_prefix}InverseWarped.nii.gz  # fixed → moving")
-        print(f"  {args.out_prefix}0GenericAffine.mat")
-        print(f"  {args.out_prefix}1Warp.nii.gz / {args.out_prefix}1InverseWarp.nii.gz")
+        print(">> Done. Key outputs with prefix:", out_prefix)
+        print(f"  {out_prefix}Warped.nii.gz        # moving → fixed")
+        print(f"  {out_prefix}InverseWarped.nii.gz  # fixed → moving")
+        print(f"  {out_prefix}0GenericAffine.mat")
+        print(f"  {out_prefix}1Warp.nii.gz / {out_prefix}1InverseWarp.nii.gz")
 
     finally:
         if not args.keep_nii:
@@ -136,12 +206,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-#python3 tif2nii_and_register.py \
-#  --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/spatial_transcriptomics/exp1_110425/2p_stacks/2025-10-14_11-59-26_fish004_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_z1-40.tif" \
-#  --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/spatial_transcriptomics/exp1_110425/oct_confocal_stacks/fish4_tifs/prealigned_rc/output_filtered_flipped_z23-z137.tif" \
-#  --fixed-spacing-um 0.396 0.396 2.0 \
-#  --moving-spacing-um 0.32 0.32 1.0 \
-#  --out-prefix reg_ \
-#  --keep-nii
