@@ -45,7 +45,7 @@ python3 ANTs_register.py \
   --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2/prealigned/20x_4us_1um_DAPI_GFP488_RFP594_fish2_s1_montaged_MattesMI_GCaMP_ch1.tif" \
   --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/2p_stacks/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif" \
   --fixed-spacing-um 1 1 1.0 \
-  --moving-spacing-um 1 1 2.0\
+  --moving-spacing-um 0.9 0.9 2.0\
   --out-prefix reg_ \
   --keep-nii
 
@@ -65,6 +65,15 @@ import os
 os.environ["PATH"] = "/Users/jonathanboulanger-weill/Packages/install/bin:" + os.environ["PATH"]
 import ants  # antspyx
 from pathlib import Path
+
+def short_name_from_fish(path: Path) -> str:
+    """
+    Return filename stem starting from 'fish' if present,
+    otherwise return the full stem.
+    """
+    stem = path.stem
+    idx = stem.find("fish")
+    return stem[idx:] if idx != -1 else stem
 
 def to_mm(sp):
     """Accept spacing as tuple in mm."""
@@ -109,18 +118,18 @@ def run_ants_registration(fixed_nii, moving_nii, out_prefix):
         "--shrink-factors", "8x4x2x1",
 
         # Affine
-        #"--transform", "Affine[0.1]",
-        #"--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
-        #"--convergence", "[1000x500x250x100,1e-8,10]",
-        #"--smoothing-sigmas", "3x2x1x0",
-        #"--shrink-factors", "8x4x2x1",
+        "--transform", "Affine[0.1]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
+        "--convergence", "[1000x500x250x100,1e-8,10]",
+        "--smoothing-sigmas", "3x2x1x0",
+        "--shrink-factors", "8x4x2x1",
 
         # SyN
-        #"--transform", "SyN[0.1,6,0]",
-        #"--metric", f"CC[{fixed_nii},{moving_nii},1,2]",
-        #"--convergence", "[200x200x200x100,1e-7,10]",
-        #"--smoothing-sigmas", "4x3x2x1",
-        #"--shrink-factors", "12x8x4x2",
+        "--transform", "SyN[0.1,6,0]",
+        "--metric", f"CC[{fixed_nii},{moving_nii},1,2]",
+        "--convergence", "[200x200x200x100,1e-7,10]",
+        "--smoothing-sigmas", "4x3x2x1",
+        "--shrink-factors", "12x8x4x2",
     ]
     print(">> Running:", " ".join(cmd))
     subprocess.run(cmd, check=True)
@@ -149,15 +158,21 @@ def main():
     if shutil.which("antsRegistration") is None:
         sys.exit("Error: antsRegistration not found in PATH.")
 
-    # Create ANTs output directory next to the fixed image
+    # Create fixed ANTs output directory
+    ants_dir = Path(
+        "/Users/jonathanboulanger-weill/Harvard University Dropbox/"
+        "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/"
+        "data/exp1_110425/ANTs_output"
+    ).resolve()
+    ants_dir.mkdir(parents=True, exist_ok=True)
+
     fixed_path = Path(args.fixed).resolve()
     moving_path = Path(args.moving).resolve()
 
-    ants_dir = fixed_path.parent / "ANTs"
-    ants_dir.mkdir(exist_ok=True)
-
-    # Build explicit output prefix: <moving>_to_<fixed>_
-    out_prefix = ants_dir / f"{moving_path.stem}_to_{fixed_path.stem}_"
+    # Build explicit output prefix: <moving>_to_<fixed>_ (shortened from 'fish')
+    moving_short = short_name_from_fish(moving_path)
+    fixed_short  = short_name_from_fish(fixed_path)
+    out_prefix = ants_dir / f"{moving_short}_to_{fixed_short}_"
 
     # Resolve spacings
     if args.fixed_spacing_mm:

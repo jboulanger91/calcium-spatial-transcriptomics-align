@@ -43,7 +43,7 @@ from skimage.transform import AffineTransform, warp
 import napari
 
 # --------------------------- USER SETTINGS ---------------------------
-folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2/"
+folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2/native"
 prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
 indices    = list(range(1, 25+1))  # e.g. 1..25
     
