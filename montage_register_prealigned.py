@@ -3,13 +3,13 @@
 montage_register_prealigned.py
 
 Build a sequential montage from pre-aligned confocal mini-stacks (TIFF) using 2D rigid registration
-on the middle Z slice (channel 0), then apply that single 2D transform to every Z slice and every
+on the middle Z slice (the selected registration channel (REG_CHANNEL)), then apply that single 2D transform to every Z slice and every
 channel in the current block before concatenation.
 
 Key ideas
 - Input stacks are already pre-aligned for orientation (no flips/rotations here).
 - Each TIFF is read into (Z, Y, X, C). Any Time/Frame axis is folded into Z (Z := T*Z).
-- Registration is performed on the middle Z slice (channel 0) against the previous *non-damaged* block.
+- Registration is performed on the middle Z slice (REG_CHANNEL) against the previous *non-damaged* block.
 - The resulting rigid transform is applied to the full 3D block (all Z) and all channels.
 - Blocks are concatenated along Z, with optional per-block trimming (SKIP_Z_TOP/BOTTOM) to hide seams.
 - A longest consecutive run of non-damaged section indices is automatically selected for montage.
@@ -44,13 +44,27 @@ from pathlib import Path
 from typing import Optional, Tuple, List
 
 # ===================== USER SETTINGS =====================
-folder        = Path("/Users/jonathanboulanger-weill/Harvard University Dropbox/"
-                     "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/"
-                     "exp1_110425/oct_confocal_stacks/benchmark_data/fish2/prealigned")
-prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
-input_suffix  = "_pre.tif"          # files like: <prefix><index>_preRC.tif
-indices       = list(range(1, 25))    # inclusive range of section indices to consider
+# Global identifiers used for ALL input/output names
+exp_id = "exp_001"   # e.g. "exp_001" or "exp1_110425"
+fish   = 2           # integer fish number
 
+# Folder that contains prealigned stacks named like:
+#   exp_001_fish2_s01_pre.tif
+folder = Path(
+    "/Users/jonathanboulanger-weill/Harvard University Dropbox/"
+    "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/"
+    "exp1_110425/oct_confocal_stacks/fish2/prealigned"
+)
+
+# Sections to consider (s01..s25)
+indices = list(range(1, 25 + 1))
+
+# Input naming convention
+# Example: exp_001_fish2_s01_pre.tif
+input_suffix = "_pre.tif"
+
+# Optional list of stacks to skip (one path per line). If entries are basenames,
+# this script matches on basename.
 damaged_list_file = os.path.join(folder, "damaged_stacks.txt")
 
 # How many Z slices to drop from each ministack before concatenation.
@@ -92,9 +106,16 @@ def to_float01(x):
     else:        x = (x - x.min()) / (x.max() - x.min() + 1e-6)
     return np.clip(x, 0, 1)
 
-def center_slice_Z0(vol_ZYXC):
+def center_slice_reg(vol_ZYXC, reg_channel: int = None):
+    """Return middle-Z 2D slice from the requested registration channel."""
+    if reg_channel is None:
+        reg_channel = REG_CHANNEL
     zmid = vol_ZYXC.shape[0] // 2
-    return vol_ZYXC[zmid, :, :, 0]
+    if vol_ZYXC.shape[-1] <= reg_channel:
+        raise ValueError(
+            f"Requested REG_CHANNEL={reg_channel} but volume has C={vol_ZYXC.shape[-1]} channels"
+        )
+    return vol_ZYXC[zmid, :, :, reg_channel]
 
 def simple_mask_np(img_np):
     x = img_np.astype(np.float32)
@@ -381,7 +402,7 @@ if __name__ == "__main__":
     # Collect actual files present for the requested indices
     present = {}
     for i in indices:
-        p = os.path.join(folder, f"{prefix}{i}{input_suffix}")
+        p = os.path.join(folder, f"{exp_id}_fish{fish}_s{i:02d}{input_suffix}")
         if os.path.exists(p):
             present[i] = p
         else:
@@ -444,7 +465,7 @@ if __name__ == "__main__":
     base_dtype = None
 
     # Sequential reference (prev good)
-    prev_center = None    # 2D numpy (middle Z, ch0) from previous aligned block
+    prev_center = None    # 2D numpy (middle Z, REG_CHANNEL) from previous aligned block
     prev_ref    = None    # ANTs image of prev_center
 
     metric_tag = "CCfast" if REG_METRIC == "CC" else "MattesMI"
@@ -460,7 +481,7 @@ if __name__ == "__main__":
         if base_dtype is None:
             base_dtype = like_dtype
 
-        moving_center = center_slice_Z0(vol).astype(np.float32)
+        moving_center = center_slice_reg(vol).astype(np.float32)
 
         if prev_ref is None:
             # First good block: keep as-is (no registration), but apply per-ministack trimming
@@ -484,7 +505,7 @@ if __name__ == "__main__":
             print("[base] set as reference for subsequent stacks")
             continue
 
-        # Register middle Z (ch0) to previous middle Z (ch0)
+        # Register middle Z (REG_CHANNEL) to previous middle Z (REG_CHANNEL)
         if REG_METRIC == "CC":
             fwd, _ = register_2d(
                 fixed_ref_np=prev_center, moving_np=moving_center, metric="CC",
@@ -513,8 +534,8 @@ if __name__ == "__main__":
         blocks.append(trimmed)
         print(f"[concat] appended; trimmed Z {z0}..-{z1} -> block shape: {trimmed.shape}")
 
-        # Update reference using aligned middle Z (ch0)
-        aligned_center = center_slice_Z0(aligned).astype(np.float32)
+        # Update reference using aligned middle Z (REG_CHANNEL)
+        aligned_center = center_slice_reg(aligned).astype(np.float32)
         centers_triplets.append((i, to_float01(aligned_center), name))
         prev_center = aligned_center
         prev_ref    = ants.from_numpy(prev_center)
@@ -527,22 +548,24 @@ if __name__ == "__main__":
     print("\n[concat] final (Z,Y,X,C) shape:", master.shape)
 
     # Save outputs (Z as pages; C interleaved)
-    slug = sanitize_prefix(prefix)
+    slug = f"{exp_id}_fish{fish}"
     tag  = metric_tag
 
-    final_out = os.path.join(folder, f"{slug}_montaged_{tag}.tif")
+    run_tag = f"s{run_start:02d}-s{run_end:02d}"
+
+    final_out = os.path.join(folder, f"{slug}_{run_tag}_montaged_{tag}.tif")
     write_bigtiff_zyxc(final_out, master, like_dtype=base_dtype)
 
     # Also export GCaMP channel alone (ch1) as a single-channel BigTIFF
     if master.shape[-1] >= 2:
-        gcamp_out = os.path.join(folder, f"{slug}_montaged_{tag}_GCaMP_ch1.tif")
+        gcamp_out = os.path.join(folder, f"{slug}_{run_tag}_montaged_{tag}_GCaMP_ch1.tif")
         master_gcamp = master[:, :, :, 1:2]  # keep singleton channel dim -> (Z,Y,X,1)
         write_bigtiff_zyxc(gcamp_out, master_gcamp, like_dtype=base_dtype)
     else:
         gcamp_out = None
         print("[warn] master has <2 channels; skipping GCaMP export")
 
-    centers_png = os.path.join(folder, f"{slug}_montaged_{tag}.png")
+    centers_png = os.path.join(folder, f"{slug}_{run_tag}_montaged_{tag}.png")
     save_centers_figure(centers_triplets, centers_png, cols=FIG_COLS, dpi=FIG_DPI)
 
     print("[save]")

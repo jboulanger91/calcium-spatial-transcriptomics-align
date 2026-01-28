@@ -6,20 +6,28 @@ Interactive napari tool to pre-align rostro–caudal confocal stacks by in-plane
 and to record a simple transform per stack (angle, vertical flip, left/right mirror, midline).
 
 Key ideas
-- Input stacks are already roughly oriented and stored as multi-page TIFFs.
-- Data model: input series -> (Z, Y, X, C) with singleton T dropped; C is typically 3 channels.
-- The user adjusts a vertical midline and rotation/flip flags using keyboard shortcuts.
+- Input stacks are multi-page TIFFs (often ImageJ hyperstacks).
+- Data model: input series -> (Z, Y, X, C). If a singleton T exists, it is removed (or folded into Z).
+- The user adjusts rotation + flips + a vertical midline guide using keyboard shortcuts.
 - The same 2D transform (angle + flips about the midline) is applied to every Z slice and channel.
-- Each pre-aligned stack is written as a BigTIFF with Z pages, each page shaped (Y, X, C).
-- A JSON file stores per-stack decisions, so sessions are resumable and adjustments are idempotent.
+- Each pre-aligned stack is written as an ImageJ-compatible BigTIFF with axes "TZCYX" (T=1).
+- A JSON file stores per-stack decisions, so sessions are resumable and updates are idempotent.
 
-Inputs
-- A folder of raw stacks with names: <prefix><index>.tif
-- Optional existing rotations_rc.json DB for reloading previous choices.
+Folder layout (fixed by this script)
+- Native inputs are read from:
+  <fish_root>/native
+- Prealigned outputs are written to:
+  <fish_root>/prealigned
 
-Outputs
-- prealigned_rc/<basename>_preRC.tif : pre-aligned stacks
-- rotations_rc.json                  : per-stack transform metadata
+Output naming (CircuitSeeker-style)
+Global identifiers:
+    exp_id = "exp_001"
+    fish   = 2
+All outputs are named:
+    {exp_id}_fish{fish}_s{section:02d}_pre.tif
+
+The per-stack decision DB is stored at:
+    <fish_root>/rotations_rc_{exp_id}_fish{fish}.json
 
 Keyboard controls
 - a / d     : -0.5° / +0.5°
@@ -34,81 +42,106 @@ Keyboard controls
 - h         : print help to console
 """
 
-import os, json
+from __future__ import annotations
+
+import os
+import json
 from typing import List, Tuple
+
 import numpy as np
 import tifffile as tiff
 from skimage import transform
 from skimage.transform import AffineTransform, warp
 import napari
 
+
 # --------------------------- USER SETTINGS ---------------------------
-folder     = "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2/native"
-prefix     = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
-indices    = list(range(1, 25+1))  # e.g. 1..25
-    
- # Where to write pre-aligned stacks
-out_dir    = os.path.join(os.path.abspath(folder), "prealigned")
+# Global identifiers used for ALL output names
+exp_id = "exp_001"   # e.g. "exp_001" or "exp1_110425"
+fish = 2             # integer
+run_id = f"{exp_id}_fish{fish}"
+
+# Fish root folder (contains native/ and prealigned/)
+fish_root = (
+    "/Users/jonathanboulanger-weill/Harvard University Dropbox/"
+    "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/"
+    "data/exp1_110425/oct_confocal_stacks/fish2"
+)
+
+native_dir = os.path.join(fish_root, "native")
+prealigned_dir = os.path.join(fish_root, "prealigned")
+
+# Input naming
+prefix = "20x-4us-1um_DAPI_GFP488_RFP594_fish2-s1-"
+indices = list(range(1, 25 + 1))  # 1..25
+
+# Output naming
 out_suffix = "_pre.tif"
 
-# Persistent transform database (per file basename)
-db_path    = os.path.join(folder, "rotations_rc.json")
+# Persistent transform database (resumable)
+# Expected full path example:
+#   <fish_root>/<exp_id>_fish<fish>_rotations.json
+#   e.g. exp_001_fish2_rotations.json
+db_path = os.path.join(fish_root, f"{run_id}_rotations.json")
 # --------------------------------------------------------------------
 
 
 # ============================= I/O ===================================
 def _drop_T_and_to_ZYXC(arr: np.ndarray, axes: str) -> np.ndarray:
-    """Convert input to (Z,Y,X,C). Drop singleton T if present. No rescale."""
+    """
+    Convert input array to (Z, Y, X, C).
+
+    - If T exists:
+        * If Z exists, folds T into Z (Z := Z*T).
+        * Else, treats T as Z.
+    - Ensures C and Z exist.
+    - Ensures Y and X exist (if missing, assumes last two dims are YX).
+    """
     A = arr
     axes = (axes or "").upper()
 
-    # Drop T dimension entirely by folding it into Z (T is treated as additional Z slices)
-    if 'T' in axes:
-        tpos = axes.index('T')
-        T = A.shape[tpos]
-        # move T next to Z (or front if Z absent)
-        if 'Z' in axes:
-            zpos = axes.index('Z')
+    # Fold or convert T
+    if "T" in axes:
+        tpos = axes.index("T")
+        if "Z" in axes:
+            zpos = axes.index("Z")
+            # move T to just after Z, then merge into Z
             A = np.moveaxis(A, tpos, zpos + 1)
-            axes = axes.replace('T', '')
-            # merge T into Z
+            axes = axes.replace("T", "")
             new_shape = list(A.shape)
             new_shape[zpos] *= new_shape[zpos + 1]
             del new_shape[zpos + 1]
             A = A.reshape(new_shape)
-            axes = axes.replace('Z', 'Z')
         else:
             # no Z axis: treat T as Z
             A = np.moveaxis(A, tpos, 0)
-            axes = axes.replace('T', 'Z')
+            axes = axes.replace("T", "Z")
 
     # Ensure C exists
-    if 'C' not in axes:
+    if "C" not in axes:
         A = A[..., None]
-        axes += 'C'
+        axes += "C"
 
     # Ensure Z exists
-    if 'Z' not in axes:
+    if "Z" not in axes:
         A = A[None, ...]
-        axes = 'Z' + axes
+        axes = "Z" + axes
 
-    # Ensure Y,X exist; if not, assume last two are Y,X
-    if 'Y' not in axes or 'X' not in axes:
-        # pad labels to match ndim
+    # Ensure Y/X exist; if not, assume last two dims are YX
+    if "Y" not in axes or "X" not in axes:
         while len(axes) < A.ndim:
-            axes = '?' + axes
-        # force last two are Y,X
-        axes = axes[:-2] + 'YX'
+            axes = "?" + axes
+        axes = axes[:-2] + "YX"
 
-    # Permute to Z,Y,X,C
-    pos = {ax:i for i,ax in enumerate(axes)}
-    order = [pos['Z'], pos['Y'], pos['X'], pos['C']]
-    zyxc = np.moveaxis(A, order, [0,1,2,3])
-    return zyxc
+    # Permute to Z,Y,X,C using a safe moveaxis pattern
+    pos = {ax: i for i, ax in enumerate(axes)}
+    src = [pos["Z"], pos["Y"], pos["X"], pos["C"]]
+    dst = [0, 1, 2, 3]
+    return np.moveaxis(A, src, dst)
 
 
 def read_stack_zyxc(path: str) -> Tuple[np.ndarray, np.dtype]:
-    """Read first series → (Z,Y,X,C) with C=3; preserve dtype (no rescale)."""
+    """Read first TIFF series and return (Z,Y,X,C) plus the original dtype."""
     with tiff.TiffFile(path) as tf:
         s = tf.series[0]
         axes = getattr(s, "axes", "") or ""
@@ -123,20 +156,24 @@ def ch0_center_slice(vol_zyxc: np.ndarray) -> np.ndarray:
     zc = vol_zyxc.shape[0] // 2
     return vol_zyxc[zc, :, :, 0]
 
+
 def to_float01_for_view(x: np.ndarray) -> np.ndarray:
     """Display-only normalization for napari preview."""
     x = x.astype(np.float32, copy=False)
-    p1, p99 = np.percentile(x, (1,99)) if np.ptp(x) > 0 else (x.min(), x.max() or 1.0)
-    if p99 > p1:
-        x = (x - p1) / (p99 - p1)
-    else:
-        x = (x - x.min()) / (x.max() - x.min() + 1e-6)
-    return np.clip(x, 0, 1)
+    if np.ptp(x) <= 0:
+        mx = float(x.max()) if x.size else 1.0
+        return np.clip(x / (mx + 1e-6), 0, 1)
+    p1, p99 = np.percentile(x, (1, 99))
+    if p99 <= p1:
+        return np.clip((x - x.min()) / (x.max() - x.min() + 1e-6), 0, 1)
+    return np.clip((x - p1) / (p99 - p1), 0, 1)
+
 
 # --- PCA helpers (optional auto angle) ---
-def make_mask(img2d: np.ndarray, sigma=1.5, min_size=3000):
+def make_mask(img2d: np.ndarray, sigma: float = 1.5, min_size: int = 3000) -> np.ndarray:
     x = to_float01_for_view(img2d)
     from skimage import morphology, filters, exposure
+
     x = exposure.equalize_adapthist(x, clip_limit=0.01)
     x = filters.gaussian(x, sigma=sigma, preserve_range=True)
     thr = filters.threshold_otsu(x)
@@ -145,6 +182,7 @@ def make_mask(img2d: np.ndarray, sigma=1.5, min_size=3000):
     m = morphology.binary_closing(m, morphology.disk(5))
     m = morphology.binary_opening(m, morphology.disk(3))
     return m
+
 
 def principal_axis_angle(img2d: np.ndarray) -> float:
     m = make_mask(img2d)
@@ -157,54 +195,62 @@ def principal_axis_angle(img2d: np.ndarray) -> float:
     _, vecs = np.linalg.eigh(C)
     v = vecs[:, -1] / (np.linalg.norm(vecs[:, -1]) + 1e-12)
     theta = np.degrees(np.arctan2(-v[1], v[0]))
-    if theta <= -90: theta += 180
-    if theta >   90: theta -= 180
+    if theta <= -90:
+        theta += 180
+    if theta > 90:
+        theta -= 180
     return float(theta)
 
-def wrap180(a: float) -> float:
-    return ((a + 180) % 360)
+
+def _wrap180(a: float) -> float:
+    return (a + 180) % 360 - 180
+
 
 def angle_to_vertical(theta_deg: float) -> float:
-    r1 = wrap180( 90 - theta_deg)
-    r2 = wrap180(-90 - theta_deg)
+    # rotate the principal axis to vertical (+90 or -90), pick the smaller magnitude
+    r1 = _wrap180(90 - theta_deg)
+    r2 = _wrap180(-90 - theta_deg)
     return r1 if abs(r1) <= abs(r2) else r2
 
-# --- flips/rotation ---
+
 def flip_lr_about_x(img: np.ndarray, guide_x: float) -> np.ndarray:
-    t = AffineTransform(scale=(-1, 1), translation=(2*guide_x, 0))
-    out = warp(img, t.inverse, order=1, preserve_range=True, mode='edge')
+    """Mirror left/right about a vertical line at x=guide_x."""
+    tform = AffineTransform(scale=(-1, 1), translation=(2 * guide_x, 0))
+    out = warp(img, tform.inverse, order=1, preserve_range=True, mode="edge")
     return out.astype(img.dtype, copy=False)
 
-def rotate_and_flip_volume_zyxc(vol: np.ndarray, angle_deg: float,
-                                flip_tb: bool, flip_lr: bool, guide_x: int) -> np.ndarray:
-    """Apply same in-plane rigid to all Z & C. Output float32; preserve_range=True."""
+
+def rotate_and_flip_volume_zyxc(
+    vol: np.ndarray, angle_deg: float, flip_tb: bool, flip_lr: bool, guide_x: int
+) -> np.ndarray:
+    """Apply same in-plane rigid transform to all Z slices & channels. Returns float32."""
     Z, Y, X, C = vol.shape
-    out = np.empty_like(vol, dtype=np.float32)
+    out = np.empty((Z, Y, X, C), dtype=np.float32)
     for z in range(Z):
         for c in range(C):
             im = vol[z, :, :, c]
-            im2 = transform.rotate(im, angle=angle_deg, resize=False,
-                                   preserve_range=True, order=1).astype(np.float32, copy=False)
+            im2 = transform.rotate(
+                im, angle=angle_deg, resize=False, preserve_range=True, order=1
+            ).astype(np.float32, copy=False)
             if flip_tb:
                 im2 = np.flip(im2, axis=0)
             if flip_lr:
                 im2 = flip_lr_about_x(im2, guide_x)
             out[z, :, :, c] = im2
     return out
-# =====================================================================
 
 
 # =========================== App ===========================
 class PreAlignApp:
-    def __init__(self, folder: str, prefix: str, indices: List[int]):
-        self.folder = folder
+    def __init__(self, in_dir: str, prefix: str, indices: List[int]):
+        self.in_dir = in_dir
         self.prefix = prefix
         self.indices = indices
 
-        # build ordered list
+        # Build ordered list of (section_index, filepath)
         self.paths: List[Tuple[int, str]] = []
         for i in indices:
-            p = os.path.join(folder, f"{prefix}{i}.tif")
+            p = os.path.join(in_dir, f"{prefix}{i}.tif")
             if os.path.exists(p):
                 self.paths.append((i, p))
             else:
@@ -212,12 +258,22 @@ class PreAlignApp:
         if not self.paths:
             raise SystemExit("No stacks found.")
 
-        # DB
+        # Load DB (resumable)
+        self.db = {}
         if os.path.exists(db_path):
-            with open(db_path, "r") as f:
-                self.db = json.load(f)
+            try:
+                with open(db_path, "r", encoding="utf-8") as f:
+                    self.db = json.load(f)
+                if not isinstance(self.db, dict):
+                    print(f"[warn] DB at {db_path} is not a dict; ignoring.")
+                    self.db = {}
+                else:
+                    print(f"[db] loaded {len(self.db)} entries from: {db_path}")
+            except json.JSONDecodeError as e:
+                print(f"[warn] Could not parse DB JSON at {db_path}: {e}")
+                self.db = {}
         else:
-            self.db = {}
+            print(f"[db] no existing DB found (will create on save): {db_path}")
 
         # state
         self.i_idx = 0
@@ -238,25 +294,35 @@ class PreAlignApp:
         self._load_current()
         napari.run()
 
-    # --- helpers ---
-    def _basename(self, path: str) -> str:
-        return os.path.basename(path)
+    def _db_key(self, section: int) -> str:
+        """Stable key independent of raw filename."""
+        return f"{run_id}_s{section:02d}"
 
-    def _db_key(self, path: str) -> str:
-        return self._basename(path)
+    def _legacy_db_keys(self, section: int, path: str) -> List[str]:
+        """Backward-compatible keys used by older versions of this tool."""
+        base = os.path.basename(path)
+        stem = os.path.splitext(base)[0]
+        return [
+            base,          # some versions keyed by basename
+            stem,          # some versions keyed by stem
+            str(section),  # some versions keyed by section number
+        ]
 
     def _print_status(self):
-        idx, path = self.paths[self.i_idx]
-        base = self._basename(path)
-        print(f"[status] {idx}/{self.paths[-1][0]} file={base} "
-              f"angle={self.angle:.2f}° flip_tb={self.flip_tb} flip_lr={self.flip_lr} guide_x={self.guide_x}")
+        section, path = self.paths[self.i_idx]
+        print(
+            f"[status] {self.i_idx+1}/{len(self.paths)} section={section:02d} "
+            f"file={os.path.basename(path)} "
+            f"angle={self.angle:.2f}° flip_tb={self.flip_tb} flip_lr={self.flip_lr} guide_x={self.guide_x}"
+        )
 
     # --- napari refresh ---
     def _preview_image(self) -> np.ndarray:
         zc = self.current_stack.shape[0] // 2
         im = self.current_stack[zc, :, :, 0]
-        im2 = transform.rotate(im, angle=self.angle, resize=False,
-                               preserve_range=True, order=1).astype(np.float32, copy=False)
+        im2 = transform.rotate(im, angle=self.angle, resize=False, preserve_range=True, order=1).astype(
+            np.float32, copy=False
+        )
         if self.flip_tb:
             im2 = np.flip(im2, axis=0)
         if self.flip_lr:
@@ -264,27 +330,28 @@ class PreAlignApp:
         return im2
 
     def _refresh_layers(self):
-        prev = self._preview_image()
-        prev01 = to_float01_for_view(prev)
+        prev01 = to_float01_for_view(self._preview_image())
 
+        name = os.path.basename(self.paths[self.i_idx][1])
         if self.img_layer is None:
-            self.img_layer = self.viewer.add_image(prev01, name=self._basename(self.paths[self.i_idx][1]),
-                                                   rgb=False, colormap='gray')
+            self.img_layer = self.viewer.add_image(prev01, name=name, rgb=False, colormap="gray")
         else:
             self.img_layer.data = prev01
-            self.img_layer.name = self._basename(self.paths[self.i_idx][1])
+            self.img_layer.name = name
 
         H, W = prev01.shape
-        x = self.guide_x
-        line = np.array([[0, x], [H-1, x]])
+        x = int(self.guide_x)
+        line = np.array([[0, x], [H - 1, x]])
         if self.line_layer is None:
-            self.line_layer = self.viewer.add_shapes([line],
-                                                     shape_type='line',
-                                                     edge_color='yellow',
-                                                     edge_width=2,
-                                                     name='midline',
-                                                     blending='translucent',
-                                                     opacity=0.9)
+            self.line_layer = self.viewer.add_shapes(
+                [line],
+                shape_type="line",
+                edge_color="yellow",
+                edge_width=2,
+                name="midline",
+                blending="translucent",
+                opacity=0.9,
+            )
             self.line_layer.editable = False
             self.line_layer.selectable = False
             self.line_layer.interactive = False
@@ -293,8 +360,9 @@ class PreAlignApp:
 
     # --- load/save ---
     def _load_current(self):
-        idx, path = self.paths[self.i_idx]
-        print(f"\n[load] {idx}: {path}")
+        section, path = self.paths[self.i_idx]
+        print(f"\n[load] section {section:02d}: {path}")
+
         vol_zyxc, like_dtype = read_stack_zyxc(path)
 
         if vol_zyxc.shape[-1] != 3:
@@ -306,21 +374,38 @@ class PreAlignApp:
         self.current_dtype = like_dtype
         self.center_raw = ch0_center_slice(self.current_stack)
 
-        key = self._db_key(path)
         H, W = self.center_raw.shape
-        rec = self.db.get(key, {"angle_deg": 0.0, "flip_tb": False, "flip_lr": False, "guide_x": W//2})
-        self.angle   = float(rec.get("angle_deg", 0.0))
+
+        # Prefer the stable key, but fall back to older key schemes so existing JSONs still work.
+        key = self._db_key(section)
+        rec = self.db.get(key)
+        used_key = key if rec is not None else None
+        if rec is None:
+            for k in self._legacy_db_keys(section, path):
+                if k in self.db:
+                    rec = self.db[k]
+                    used_key = k
+                    break
+
+        if rec is None:
+            rec = {"angle_deg": 0.0, "flip_tb": False, "flip_lr": False, "guide_x": W // 2}
+        else:
+            # If we loaded a legacy record, keep working under the stable key going forward.
+            if used_key != key:
+                print(f"[db] found legacy key '{used_key}' → using it to initialize stable key '{key}'")
+                self.db[key] = rec
+
+        self.angle = float(rec.get("angle_deg", 0.0))
         self.flip_tb = bool(rec.get("flip_tb", False))
         self.flip_lr = bool(rec.get("flip_lr", False))
-        self.guide_x = int(rec.get("guide_x", W//2))
+        self.guide_x = int(rec.get("guide_x", W // 2))
 
         self._refresh_layers()
         self._print_status()
 
     def _save_current(self):
-        idx, path = self.paths[self.i_idx]
-        base = self._basename(path)
-        key  = self._db_key(path)
+        section, _path = self.paths[self.i_idx]
+        key = self._db_key(section)
 
         # persist decision
         self.db[key] = {
@@ -329,33 +414,36 @@ class PreAlignApp:
             "flip_lr": bool(self.flip_lr),
             "guide_x": int(self.guide_x),
         }
-        with open(db_path, "w") as f:
+        os.makedirs(fish_root, exist_ok=True)
+        with open(db_path, "w", encoding="utf-8") as f:
             json.dump(self.db, f, indent=2)
 
         # apply to whole stack
-        vol_tx = rotate_and_flip_volume_zyxc(self.current_stack, self.angle, self.flip_tb, self.flip_lr, self.guide_x)
+        vol_tx = rotate_and_flip_volume_zyxc(
+            self.current_stack, self.angle, self.flip_tb, self.flip_lr, self.guide_x
+        )
 
-        # write Z pages (Y,X,C) inline (no separate helper)
-        os.makedirs(out_dir, exist_ok=True)
-        out_name = os.path.splitext(base)[0] + out_suffix
-        out_path = os.path.join(out_dir, out_name)
+        # output name: exp_id_fishX_sYY_pre.tif
+        os.makedirs(prealigned_dir, exist_ok=True)
+        out_name = f"{run_id}_s{section:02d}{out_suffix}"
+        out_path = os.path.join(prealigned_dir, out_name)
 
         # Write ImageJ-compatible hyperstack with explicit T and Z axes
-        # Input vol_tx has shape (Z, Y, X, C)
-        # ImageJ requires (T, Z, C, Y, X) with axes="TZCYX"
+        # vol_tx: (Z, Y, X, C) -> ImageJ wants (T, Z, C, Y, X) with axes="TZCYX"
         Z, Y, X, C = vol_tx.shape
-        vol_ij = vol_tx.transpose(0, 3, 1, 2)   # (Z, C, Y, X)
-        vol_ij = vol_ij[np.newaxis, ...]        # (T=1, Z, C, Y, X)
+        vol_ij = vol_tx.transpose(0, 3, 1, 2)  # (Z, C, Y, X)
+        vol_ij = vol_ij[np.newaxis, ...]       # (T=1, Z, C, Y, X)
 
         tiff.imwrite(
             out_path,
             vol_ij.astype(self.current_dtype, copy=False),
             bigtiff=True,
             imagej=True,
-            metadata={"axes": "TZCYX"}
+            metadata={"axes": "TZCYX"},
         )
 
         print(f"[save] wrote: {out_path}")
+        print(f"[db]   updated: {db_path}")
 
     # --- navigation ---
     def _next(self):
@@ -375,79 +463,91 @@ class PreAlignApp:
     # --- auto guess ---
     def _auto_angle(self):
         theta = principal_axis_angle(self.center_raw)
-        rot_to_vertical = angle_to_vertical(theta)
-        self.angle = float(rot_to_vertical)
+        self.angle = float(angle_to_vertical(theta))
         print(f"[auto] PCA θ={theta:.2f}°, suggested angle={self.angle:.2f}°")
         self._refresh_layers()
         self._print_status()
 
     # --- key bindings ---
     def _bind_keys(self):
-        @self.viewer.bind_key('a')
-        def _dec_small(viewer): self._bump_angle(-0.5)
+        @self.viewer.bind_key("a")
+        def _dec_small(_viewer):  # noqa: N802
+            self._bump_angle(-0.5)
 
-        @self.viewer.bind_key('d')
-        def _inc_small(viewer): self._bump_angle(+0.5)
+        @self.viewer.bind_key("d")
+        def _inc_small(_viewer):  # noqa: N802
+            self._bump_angle(+0.5)
 
-        @self.viewer.bind_key('s')
-        def _dec_big(viewer): self._bump_angle(-5.0)
+        @self.viewer.bind_key("s")
+        def _dec_big(_viewer):  # noqa: N802
+            self._bump_angle(-5.0)
 
-        @self.viewer.bind_key('w')
-        def _inc_big(viewer): self._bump_angle(+5.0)
+        @self.viewer.bind_key("w")
+        def _inc_big(_viewer):  # noqa: N802
+            self._bump_angle(+5.0)
 
-        @self.viewer.bind_key('Shift-F')
-        def _toggle_tb(viewer):
+        @self.viewer.bind_key("Shift-F")
+        def _toggle_tb(_viewer):  # noqa: N802
             self.flip_tb = not self.flip_tb
-            self._refresh_layers(); self._print_status()
+            self._refresh_layers()
+            self._print_status()
 
-        @self.viewer.bind_key('x')
-        def _toggle_lr(viewer):
+        @self.viewer.bind_key("x")
+        def _toggle_lr(_viewer):  # noqa: N802
             self.flip_lr = not self.flip_lr
-            self._refresh_layers(); self._print_status()
+            self._refresh_layers()
+            self._print_status()
 
-        @self.viewer.bind_key('left')
-        def _guide_left(viewer):
-            self.guide_x = max(0, self.guide_x - 10)
-            self._refresh_layers(); self._print_status()
+        @self.viewer.bind_key("left")
+        def _guide_left(_viewer):  # noqa: N802
+            self.guide_x = max(0, int(self.guide_x) - 10)
+            self._refresh_layers()
+            self._print_status()
 
-        @self.viewer.bind_key('right')
-        def _guide_right(viewer):
+        @self.viewer.bind_key("right")
+        def _guide_right(_viewer):  # noqa: N802
             W = self.center_raw.shape[1]
-            self.guide_x = min(W-1, self.guide_x + 10)
-            self._refresh_layers(); self._print_status()
+            self.guide_x = min(W - 1, int(self.guide_x) + 10)
+            self._refresh_layers()
+            self._print_status()
 
-        @self.viewer.bind_key('g')
-        def _guess(viewer): self._auto_angle()
+        @self.viewer.bind_key("g")
+        def _guess(_viewer):  # noqa: N802
+            self._auto_angle()
 
-        @self.viewer.bind_key('r')
-        def _reset(viewer):
+        @self.viewer.bind_key("r")
+        def _reset(_viewer):  # noqa: N802
             H, W = self.center_raw.shape
-            self.angle, self.flip_tb, self.flip_lr, self.guide_x = 0.0, False, False, W//2
-            self._refresh_layers(); self._print_status()
+            self.angle, self.flip_tb, self.flip_lr, self.guide_x = 0.0, False, False, W // 2
+            self._refresh_layers()
+            self._print_status()
 
-        @self.viewer.bind_key('n')
-        def _save_next(viewer):
+        @self.viewer.bind_key("n")
+        def _save_next(_viewer):  # noqa: N802
             self._save_current()
             self._next()
 
-        @self.viewer.bind_key('p')
-        def _prev_no_save(viewer): self._prev()
+        @self.viewer.bind_key("p")
+        def _prev_no_save(_viewer):  # noqa: N802
+            self._prev()
 
-        @self.viewer.bind_key('h')
-        def _help(viewer):
+        @self.viewer.bind_key("h")
+        def _help(_viewer):  # noqa: N802
             print(__doc__)
             self._print_status()
 
     def _bump_angle(self, delta: float):
-        self.angle += delta
-        if self.angle <= -180: self.angle += 360
-        if self.angle >   180: self.angle -= 360
-        self._refresh_layers(); self._print_status()
+        self.angle = _wrap180(self.angle + delta)
+        self._refresh_layers()
+        self._print_status()
 
 
 # --------------------------- Entry point ---------------------------
 if __name__ == "__main__":
-    if not os.path.isdir(folder):
-        raise SystemExit(f"Folder not found: {folder}")
-    os.makedirs(out_dir, exist_ok=True)
-    PreAlignApp(folder=folder, prefix=prefix, indices=indices)
+    if not os.path.isdir(native_dir):
+        raise SystemExit(f"Native input folder not found: {native_dir}")
+
+    os.makedirs(prealigned_dir, exist_ok=True)
+    print(f"[db] using DB path: {db_path}")
+
+    PreAlignApp(in_dir=native_dir, prefix=prefix, indices=indices)
