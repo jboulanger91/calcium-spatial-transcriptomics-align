@@ -39,7 +39,7 @@ Requirements
 
 Example
 -------
-python3 ANTs_register_without_mask.py \
+python3 ANTs_register_local.py \
   --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/fish2/prealigned/exp_001_fish2_s05-s09_montaged_MattesMI_GCaMP_ch1.tif" \
   --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/2p_stacks/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif" \
   --fixed-spacing-um 1 1 1.0 \
@@ -260,19 +260,19 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         "--smoothing-sigmas", "3x2x1x0",
         "--shrink-factors", "8x4x2x1",
 
-        # Similarity (adds isotropic scale)
-        "--transform", "Similarity[0.1]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
-        "--convergence", "[1000x500x250x100,1e-6,10]",
-        "--smoothing-sigmas", "3x2x1x0",
-        "--shrink-factors", "8x4x2x1",
+        # Similarity (stronger to absorb global scale mismatch)
+        "--transform", "Similarity[0.2]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
+        "--convergence", "[3000x2000x1000x500x250,1e-6,10]",
+        "--smoothing-sigmas", "4x3x2x1x0",
+        "--shrink-factors", "16x8x4x2x1",
 
         # Affine
-        "--transform", "Affine[0.1]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
-        "--convergence", "[1000x500x250x100,1e-6,10]",
-        "--smoothing-sigmas", "3x2x1x0",
-        "--shrink-factors", "8x4x2x1",
+        #"--transform", "Affine[0.1]",
+        #"--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
+        #"--convergence", "[1000x500x250x100,1e-6,10]",
+        #"--smoothing-sigmas", "3x2x1x0",
+        #"--shrink-factors", "8x4x2x1",
 
         # SyN (conservative)
         #"--transform", "SyN[0.30,2,0]",                # step=0.30 (was 0.25)
