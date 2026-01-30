@@ -26,10 +26,10 @@ Outputs (in out-dir):
 
 Example usage:
   python3 ants_affine_minimal.py \
-  --fixed  "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/benchmark_data/fish2/prealigned/20x_4us_1um_DAPI_GFP488_RFP594_fish2_s1_montaged_MattesMI_GCaMP_ch1.tif" \
+  --fixed  "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/fish2/prealigned/exp_001_fish2_s05-s09_montaged_MattesMI_GCaMP_ch1.tif" \
   --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/2p_stacks/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif" \
   --fixed-spacing-um 1 1 1.0 \
-  --moving-spacing-um 1 1 2.0 \
+  --moving-spacing-um 1 1 2.0\
   --out-dir "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/ANTs_output" \
   --exp-id exp_001 \
   --fish 2 \
@@ -74,6 +74,14 @@ def save_nii_from_xyz(vol_xyz: np.ndarray, spacing_xyz_um: np.ndarray, out_nii_g
     vol_zyx = vol_xyz.transpose(2, 1, 0)  # back to (Z,Y,X) for SimpleITK
     img = sitk.GetImageFromArray(vol_zyx)
     # SimpleITK spacing is (X,Y,Z)
+    img.SetSpacing(tuple(float(x) for x in spacing_xyz_um))
+    sitk.WriteImage(img, str(out_nii_gz), useCompression=True)
+
+
+def save_mask_nii_from_xyz(mask_xyz: np.ndarray, spacing_xyz_um: np.ndarray, out_nii_gz: Path) -> None:
+    """Save a binary mask (X,Y,Z) as NIfTI (.nii.gz) with correct spacing."""
+    mask_zyx = mask_xyz.transpose(2, 1, 0)  # (Z,Y,X)
+    img = sitk.GetImageFromArray(mask_zyx.astype(np.uint8))
     img.SetSpacing(tuple(float(x) for x in spacing_xyz_um))
     sitk.WriteImage(img, str(out_nii_gz), useCompression=True)
 
@@ -161,8 +169,10 @@ def main():
     # -------------------------
     # Masks (optional)
     # -------------------------
-    fix_mask_path = out_dir / f"{args.exp_id}_fish{args.fish}_fix_mask.nrrd"
-    mov_mask_path = out_dir / f"{args.exp_id}_fish{args.fish}_mov_mask.nrrd"
+    fix_mask_nrrd = out_dir / f"{args.exp_id}_fish{args.fish}_fix_mask.nrrd"
+    mov_mask_nrrd = out_dir / f"{args.exp_id}_fish{args.fish}_mov_mask.nrrd"
+    fix_mask_nii = out_dir / f"{args.exp_id}_fish{args.fish}_fix_mask.nii.gz"
+    mov_mask_nii = out_dir / f"{args.exp_id}_fish{args.fish}_mov_mask.nii.gz"
 
     masks_arg = None
     if args.use_masks:
@@ -171,20 +181,34 @@ def main():
         print("[mask] computing moving mask...")
         mov_mask = brain_mask(mov_xyz.astype(np.float32, copy=False), mov_spacing, lambda2=64.0, ds=args.mask_downsample)
 
-        nrrd.write(str(fix_mask_path), fix_mask)
-        nrrd.write(str(mov_mask_path), mov_mask)
+        # Save NRRD (for inspection/debugging)
+        nrrd.write(str(fix_mask_nrrd), fix_mask)
+        nrrd.write(str(mov_mask_nrrd), mov_mask)
+
+        # Save NIfTI (for ANTs)
+        save_mask_nii_from_xyz(fix_mask, fix_spacing, fix_mask_nii)
+        save_mask_nii_from_xyz(mov_mask, mov_spacing, mov_mask_nii)
 
         print("[save] masks:")
-        print("  fix:", fix_mask_path)
-        print("  mov:", mov_mask_path)
+        print("  fix nrrd:", fix_mask_nrrd)
+        print("  mov nrrd:", mov_mask_nrrd)
+        print("  fix nii :", fix_mask_nii)
+        print("  mov nii :", mov_mask_nii)
 
-        masks_arg = f"[{fix_mask_path},{mov_mask_path}]"
+        masks_arg = f"[{fix_mask_nii},{mov_mask_nii}]"
         print(f"[ants] using masks: {masks_arg}")
 
     # -------------------------
     # ANTs registration
     # -------------------------
+    # ANTs uses an output "prefix" for transform filenames (e.g. *0GenericAffine.mat).
+    # For the warped image, we write directly to the canonical name to avoid
+    # case-insensitive filesystem collisions (Warped vs warped).
     prefix = out_dir / f"{args.exp_id}_fish{args.fish}_"
+    warped_dst = out_dir / f"{args.exp_id}_fish{args.fish}_warped.nii.gz"
+    inverse_warped_dst = out_dir / f"{args.exp_id}_fish{args.fish}_inversewarped.nii.gz"
+    affine_dst = out_dir / f"{args.exp_id}_fish{args.fish}_affine.mat"
+
     print("[ants] running antsRegistration...")
 
     cmd = [
@@ -194,22 +218,29 @@ def main():
         "--interpolation", "Linear",
         "--winsorize-image-intensities", "[0.005,0.995]",
         "--use-histogram-matching", "0",
-        "--output", f"[{prefix},{prefix}Warped.nii.gz,{prefix}InverseWarped.nii.gz]",
+        "--output", f"[{prefix},{warped_dst},{inverse_warped_dst}]",
         "--write-composite-transform", "0",
 
-        # Rigid (coarse)
+        # Rigid
         "--transform", "Rigid[0.1]",
-        "--metric", f"Mattes[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
-        "--convergence", "[200x100x50x0,1e-7,10]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
+        "--convergence", "[1000x500x250x300,1e-8,10]",
         "--smoothing-sigmas", "3x2x1x0",
         "--shrink-factors", "8x4x2x1",
 
-        # Affine (coarse)
+        # Affine
         "--transform", "Affine[0.1]",
-        "--metric", f"Mattes[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
-        "--convergence", "[200x100x50x0,1e-7,10]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
+        "--convergence", "[1000x500x250x100,1e-8,10]",
         "--smoothing-sigmas", "3x2x1x0",
         "--shrink-factors", "8x4x2x1",
+
+        # SyN (deformable)
+        #"--transform", "SyN[0.1,6,0]",
+        #"--metric", f"CC[{fixed_nii},{moving_nii},1,2]",
+        #"--convergence", "[200x200x200x100,1e-7,10]",
+        #"--smoothing-sigmas", "4x3x2x1",
+        #"--shrink-factors", "12x8x4x2",
     ]
 
     if masks_arg is not None:
@@ -221,18 +252,15 @@ def main():
     # -------------------------
     # Canonical output naming
     # -------------------------
-    warped_src = Path(f"{prefix}Warped.nii.gz")
+    # Warped output is written directly to `warped_dst` by antsRegistration.
     affine_src = Path(f"{prefix}0GenericAffine.mat")
 
-    warped_dst = out_dir / f"{args.exp_id}_fish{args.fish}_warped.nii.gz"
-    affine_dst = out_dir / f"{args.exp_id}_fish{args.fish}_affine.mat"
-
-    if not warped_src.exists():
-        raise FileNotFoundError(f"Expected warped output not found: {warped_src}")
+    if not Path(warped_dst).exists():
+        raise FileNotFoundError(f"Expected warped output not found: {warped_dst}")
     if not affine_src.exists():
         raise FileNotFoundError(f"Expected affine transform not found: {affine_src}")
 
-    shutil.copy2(warped_src, warped_dst)
+    # Copy the affine to the canonical name (safe across case-insensitive filesystems)
     shutil.copy2(affine_src, affine_dst)
 
     print(">> Done. Wrote:")

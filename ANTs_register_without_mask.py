@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-ANTs_register.py
+ANTs_register_without_mask.py
 
 Clean, minimal, robust ANTs affine registration driver tailored to the user's
 pipeline. This script:
   - converts two 3D TIFF stacks to NIfTI (with explicit spacing)
-  - optionally computes coarse brain masks from TIFFs via CircuitSeeker level_set,
-    converts masks to NIfTI, and passes them to ANTs registration
-  - runs a two-stage ANTs registration (Rigid -> Affine) using the project's
+  - runs a three-stage ANTs registration (Rigid -> Similarity -> Affine) using the project's
     preferred parameters (kept verbatim)
   - locates ANTs outputs robustly
   - writes standardized outputs:
@@ -24,7 +22,7 @@ Notes
   are preserved from your preferred configuration.
 
 Example usage:
-python3 ANTs_register.py \
+python3 ANTs_register_without_mask.py \
   --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/fish2/prealigned/exp_001_fish2_s05-s09_montaged_MattesMI_GCaMP_ch1.tif" \
   --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/2p_stacks/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif" \
   --fixed-spacing-um 1 1 1.0 \
@@ -32,8 +30,6 @@ python3 ANTs_register.py \
   --exp-id exp_001 \
   --fish 2 \
   --out-dir "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/ANTs_output" \
-  --use-masks \
-  --mask-downsample 2 \
   --keep-nii  
 """
 
@@ -44,12 +40,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
-import time
-import nrrd
-from tifffile import imread
-from scipy.ndimage import zoom, binary_closing, binary_dilation
-from CircuitSeeker import level_set
 
 import SimpleITK as sitk
 import tifffile as tiff
@@ -87,48 +77,6 @@ def read_tif_write_nii(tif_path: Path, nii_path: Path, spacing_mm=None):
     return nii_path
 
 
-def read_tiff_xyz(tif_path: Path) -> np.ndarray:
-    """Read a 3D TIFF and return a numpy volume in (X, Y, Z) order."""
-    vol_zyx = imread(str(tif_path))
-    if vol_zyx.ndim != 3:
-        raise ValueError(f"Expected a 3D TIFF (Z,Y,X). Got shape={vol_zyx.shape} for {tif_path}")
-    return vol_zyx.transpose(2, 1, 0)  # -> (X,Y,Z)
-
-
-def brain_mask(vol_xyz: np.ndarray, spacing_xyz_um: np.ndarray, lambda2: float, ds: int = 4) -> np.ndarray:
-    """Coarse brain mask via level_set on a downsampled volume, then upsample + smooth."""
-    ds = max(int(ds), 1)
-    vol_skip = vol_xyz[::ds, ::ds, ::ds]
-    skip_spacing = spacing_xyz_um * np.array([ds, ds, ds], dtype=float)
-
-    t0 = time.time()
-    print(f"    [mask] downsample={ds} vol_skip={vol_skip.shape} spacing_um={skip_spacing}")
-
-    mask_small = level_set.brain_detection(
-        vol_skip,
-        skip_spacing,
-        mask_smoothing=2,
-        iterations=[80, 40, 10],
-        smooth_sigmas=[12, 6, 3],
-        lambda2=lambda2,
-    )
-
-    print(f"    [mask] level_set done in {time.time() - t0:.1f}s")
-
-    mask = zoom(mask_small, np.array(vol_xyz.shape) / np.array(vol_skip.shape), order=0)
-    mask = binary_closing(mask, np.ones((5, 5, 5))).astype(np.uint8)
-    mask = binary_dilation(mask, np.ones((5, 5, 5))).astype(np.uint8)
-    return mask
-
-
-def save_mask_nii_from_xyz(mask_xyz: np.ndarray, spacing_xyz_um: np.ndarray, out_nii_gz: Path) -> None:
-    """Save a binary mask (X,Y,Z) as NIfTI (.nii.gz) with correct spacing (µm as-is)."""
-    mask_zyx = mask_xyz.transpose(2, 1, 0)  # (Z,Y,X)
-    img = sitk.GetImageFromArray(mask_zyx.astype(np.uint8))
-    img.SetSpacing(tuple(float(x) for x in spacing_xyz_um))
-    sitk.WriteImage(img, str(out_nii_gz), useCompression=True)
-
-
 def _to_uint16_for_imagej(vol: np.ndarray) -> np.ndarray:
     if np.issubdtype(vol.dtype, np.floating):
         p1, p99 = np.percentile(vol, (1, 99))
@@ -161,8 +109,8 @@ def locate_warped_output(prefix: Path, ants_dir: Path) -> Path:
     raise FileNotFoundError(f"Could not find ANTs warped output with prefix '{prefix.name}' in {ants_dir} or CWD.")
 
 
-def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, masks_arg: str | None = None):
-    # Keep the ANTs registration parameters (Rigid -> Affine) as requested.
+def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str):
+    # Keep the ANTs registration parameters (Rigid -> Similarity -> Affine) as requested.
     cmd = [
         "antsRegistration",
         "--dimensionality", "3",
@@ -172,22 +120,33 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, mask
         "--write-composite-transform", "1",
 
         # Rigid
-        "--transform", "Rigid[0.3]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.50]",
-        "--convergence", "[4000x500x250,1e-6,10]",
-        "--smoothing-sigmas", "4x2x1",
-        "--shrink-factors", "8x4x2",
+        "--transform", "Rigid[0.1]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
+        "--convergence", "[1000x500x250x100,1e-6,10]",
+        "--smoothing-sigmas", "3x2x1x0",
+        "--shrink-factors", "8x4x2x1",
+
+        # Similarity (adds isotropic scale)
+        "--transform", "Similarity[0.1]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
+        "--convergence", "[1000x500x250x100,1e-6,10]",
+        "--smoothing-sigmas", "3x2x1x0",
+        "--shrink-factors", "8x4x2x1",
 
         # Affine
-        "--transform", "Affine[0.3]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.50]",
-        "--convergence", "[4000x500x250,1e-6,10]",
-        "--smoothing-sigmas", "4x2x1",
-        "--shrink-factors", "8x4x2",
-    ]
+        "--transform", "Affine[0.1]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
+        "--convergence", "[1000x500x250x100,1e-6,10]",
+        "--smoothing-sigmas", "3x2x1x0",
+        "--shrink-factors", "8x4x2x1",
 
-    if masks_arg is not None:
-        cmd += ["--masks", masks_arg]
+        # Non-linear SyN
+        "--transform", "SyN[0.15,3,0]",                 # step=0.15, smoother updates than 6
+        "--metric", f"CC[{fixed_nii},{moving_nii},1,4]",# CC radius 4 (more robust, slower)
+        "--convergence", "[200x200x150x100x50,1e-7,10]",
+        "--smoothing-sigmas", "4x3x2x1x0",
+        "--shrink-factors", "10x8x4x2x1",
+    ]
 
     print(
         ">> Running ANTs:",
@@ -197,15 +156,12 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, mask
 
 
 def main():
-    p = argparse.ArgumentParser(description="Convert TIFF -> NIfTI and run ANTs registration (Rigid->Affine).")
+    p = argparse.ArgumentParser(description="Convert TIFF -> NIfTI and run ANTs registration (Rigid->Similarity->Affine).")
     p.add_argument("--fixed", required=True, help="Fixed/reference TIFF stack (source TIFF)")
     p.add_argument("--moving", required=True, help="Moving TIFF stack (source TIFF)")
     p.add_argument("--out-dir", required=False, default=None, help="Output folder for results")
     p.add_argument("--exp-id", required=True, help="Experiment id (e.g. exp_001)")
     p.add_argument("--fish", required=True, type=int, help="Fish number (e.g. 2)")
-
-    p.add_argument("--use-masks", action="store_true", help="Compute coarse brain masks from TIFFs and pass to ANTs")
-    p.add_argument("--mask-downsample", type=int, default=4, help="Downsample factor for mask computation (default 4)")
 
     # spacing in microns (preferred by user workflow) or mm
     p.add_argument("--fixed-spacing-um", nargs=3, type=float, help="Fixed spacing in µm (sx sy sz)")
@@ -248,17 +204,6 @@ def main():
     else:
         moving_spacing_mm = None
 
-    # Spacing in microns for mask computation (CircuitSeeker expects µm)
-    if args.fixed_spacing_um is None and args.fixed_spacing_mm is not None:
-        fixed_spacing_um = np.array([x * 1000.0 for x in args.fixed_spacing_mm], dtype=float)
-    else:
-        fixed_spacing_um = np.array(args.fixed_spacing_um, dtype=float) if args.fixed_spacing_um else None
-
-    if args.moving_spacing_um is None and args.moving_spacing_mm is not None:
-        moving_spacing_um = np.array([x * 1000.0 for x in args.moving_spacing_mm], dtype=float)
-    else:
-        moving_spacing_um = np.array(args.moving_spacing_um, dtype=float) if args.moving_spacing_um else None
-
     tmpdir = Path(tempfile.mkdtemp(prefix="tif2nii_"))
     fixed_nii = tmpdir / "fixed.nii.gz"
     moving_nii = tmpdir / "moving.nii.gz"
@@ -268,42 +213,11 @@ def main():
         read_tif_write_nii(fixed_tif, fixed_nii, spacing_mm=fixed_spacing_mm)
         read_tif_write_nii(moving_tif, moving_nii, spacing_mm=moving_spacing_mm)
 
-        masks_arg = None
-        if args.use_masks:
-            if fixed_spacing_um is None or moving_spacing_um is None:
-                raise ValueError("--use-masks requires spacing to be provided in either --fixed-spacing-um/--moving-spacing-um or mm.")
-
-            print(">> Computing masks from TIFFs (this can be slow on first run)...")
-            print("[mask] computing fixed mask...")
-            fix_xyz = read_tiff_xyz(fixed_tif).astype(np.float32, copy=False)
-            fix_mask = brain_mask(fix_xyz, fixed_spacing_um, lambda2=32.0, ds=args.mask_downsample)
-
-            print("[mask] computing moving mask...")
-            mov_xyz = read_tiff_xyz(moving_tif).astype(np.float32, copy=False)
-            mov_mask = brain_mask(mov_xyz, moving_spacing_um, lambda2=64.0, ds=args.mask_downsample)
-
-            fix_mask_nrrd = out_dir / f"{args.exp_id}_fish{args.fish}_fix_mask.nrrd"
-            mov_mask_nrrd = out_dir / f"{args.exp_id}_fish{args.fish}_mov_mask.nrrd"
-            fix_mask_nii = out_dir / f"{args.exp_id}_fish{args.fish}_fix_mask.nii.gz"
-            mov_mask_nii = out_dir / f"{args.exp_id}_fish{args.fish}_mov_mask.nii.gz"
-
-            print("[save] writing mask NRRDs...")
-            nrrd.write(str(fix_mask_nrrd), fix_mask)
-            nrrd.write(str(mov_mask_nrrd), mov_mask)
-
-            print("[save] writing mask NIfTIs (for ANTs)...")
-            save_mask_nii_from_xyz(fix_mask, fixed_spacing_um, fix_mask_nii)
-            save_mask_nii_from_xyz(mov_mask, moving_spacing_um, mov_mask_nii)
-
-            masks_arg = f"[{fix_mask_nii},{mov_mask_nii}]"
-            print("[ants] using masks:")
-            print("  ", masks_arg)
-
         # ANTs prefix (ANTs will append names like <prefix>Warped.nii.gz)
         prefix = out_dir / f"{args.exp_id}_fish{args.fish}_"
 
         print(">> Running ANTs registration...")
-        run_ants_registration(str(fixed_nii), str(moving_nii), str(prefix), masks_arg=masks_arg)
+        run_ants_registration(str(fixed_nii), str(moving_nii), str(prefix))
 
         print(">> Locating ANTs warped output...")
         warped_src = locate_warped_output(prefix, out_dir)
