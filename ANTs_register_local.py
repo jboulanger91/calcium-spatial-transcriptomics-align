@@ -268,11 +268,11 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         "--shrink-factors", "16x8x4x2x1",
 
         # Affine (more global)
-        "--transform", "Affine[0.15]",  # slightly larger step
+        "--transform", "Affine[0.30]",  # slightly larger step
         "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,0.5]",
-        "--convergence", "[2000x1500x1000x500x250,1e-6,10]",
-        "--smoothing-sigmas", "4x3x2x1x0",
-        "--shrink-factors", "16x8x4x2x1",
+        "--convergence", "[4000x3000x2000x1500x1000x500x250,1e-6,10]",
+        "--smoothing-sigmas", "6x5x4x3x2x1x0",
+        "--shrink-factors", "64x32x16x8x4x2x1",
 
         # SyN (conservative)
         #"--transform", "SyN[0.30,2,0]",                # step=0.30 (was 0.25)

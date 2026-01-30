@@ -1,8 +1,6 @@
 # Multimodal volumetric stack registration (Napari + ANTs)
 
-This repository implements a **robust, reproducible pipeline for registering large 3D microscopy volumes across modalities** (e.g. confocal ↔ functional imaging). The workflow combines lightweight **interactive pre-alignment**, automated **quality control and montage construction**, and **multi-stage ANTs registration** with explicit physical spacing and full parameter provenance.
-
-The code is designed for real experimental data: anisotropic voxels, partial tissue loss, damaged sections, large global scale differences, and substantial non-linear deformations introduced by tissue processing.
+This repository implements a **robust, reproducible pipeline for registering large 3D microscopy volumes across modalities** (e.g. confocal ↔ functional imaging). The workflow combines lightweight **interactive pre-alignment**, automated **quality control and montage construction**, and **multi-stage ANTs registration**.
 
 ---
 
@@ -45,6 +43,9 @@ Builds a clean reference volume from multiple adjacent stacks:
 - applies the transform to all slices/channels
 - concatenates stacks into a single 3D montage
 
+![Aligned sections after montage registration](data/img/aligned_sections.png)
+*Example output of the montage step, showing multiple adjacent sections rigidly aligned and concatenated into a clean reference volume prior to ANTs registration.*
+
 ### `ANTs_register_without_mask.py`
 Main registration driver based on **ANTs**:
 - converts fixed and moving TIFF stacks to NIfTI with **explicit voxel spacing**
@@ -55,8 +56,6 @@ Main registration driver based on **ANTs**:
   - canonical warped volumes
   - ImageJ-compatible 2‑channel overlays
   - **timestamped JSON files containing the full `antsRegistration` command** for reproducibility
-
-This script is intentionally explicit: all ANTs parameters are visible, versionable, and comparable across runs.
 
 ---
 
@@ -118,10 +117,10 @@ python ANTs_register_without_mask.py \
 ```
 
 Each run produces:
-- `exp_001_fish2_warped.nii.gz` (latest result)
-- `exp_001_fish2_fixed_warped_2ch.tif` (latest overlay)
-- `exp_001_fish2_<timestamp>_overlay.tif`
-- `exp_001_fish2_<timestamp>_ants_params.json`
+- `expX_fishY_warped.nii.gz` (latest result)
+- `expX_fishY_fixed_warped_2ch.tif` (latest overlay)
+- `expX_fishY_<timestamp>_overlay.tif`
+- `expX_fishY_<timestamp>_ants_params.json`
 
 The JSON file records the **full ANTs command**, input paths, spacings, and outputs, enabling exact reproduction of any run.
 
