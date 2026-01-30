@@ -43,7 +43,7 @@ Builds a clean reference volume from multiple adjacent stacks:
 - applies the transform to all slices/channels
 - concatenates stacks into a single 3D montage
 
-![Aligned sections after montage registration](calcium-spatial-transcriptomics-align/aligned_sections.png)
+![Aligned sections after montage registration](aligned_sections.png)
 *Example output of the montage step, showing multiple adjacent sections rigidly aligned and concatenated into a clean reference volume prior to ANTs registration.*
 
 ### `ANTs_register_without_mask.py`
