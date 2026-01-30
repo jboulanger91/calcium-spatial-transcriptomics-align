@@ -44,7 +44,7 @@ Builds a clean reference volume from multiple adjacent stacks:
 - concatenates stacks into a single 3D montage
 
 ![Aligned sections after montage registration](aligned_sections.png)
-*Example output of the montage step, showing multiple adjacent sections rigidly aligned and concatenated into a clean reference volume prior to ANTs registration.*
+*Example output of the montage step, showing multiple adjacent sections rigidly aligned prior to ANTs registration.*
 
 ### `ANTs_register_without_mask.py`
 Main registration driver based on **ANTs**:
@@ -81,32 +81,29 @@ python napari_pre-alignment.py
 
 Interactively rotate/flip stacks so all volumes share a consistent orientation before automated processing.
 
----
 
 ### 2) QC and damaged-section detection
 
 ```bash
-python annotate_damaged_sections.py
+python3 annotate_damaged_sections.py
 ```
 
 Produces a PDF report and a `damaged_stacks.txt` file used by the montage step.
 
----
 
 ### 3) Montage clean sections
 
 ```bash
-python montage_register_prealigned.py
+python3 montage_register_prealigned.py
 ```
 
 Builds a single, clean reference volume from the longest contiguous run of non-damaged stacks.
 
----
 
 ### 4) Multimodal registration with ANTs
 
 ```bash
-python ANTs_register_without_mask.py \
+python3 ANTs_register_without_mask.py \
   --fixed  /path/to/fixed_montage.tif \
   --moving /path/to/moving_stack.tif \
   --fixed-spacing-um  0.621 0.621 1.0 \
@@ -136,16 +133,5 @@ conda activate stx-py310
 ```
 
 This installs ANTs dependencies, Napari, scientific Python libraries, and Bio-Formats support.
-
----
-
-## Design principles
-
-- **Explicit physical units** — voxel spacing is always set deliberately
-- **Coarse-to-fine alignment** — large capture range before refinement
-- **Human-in-the-loop QC** — visual inspection is integrated, not an afterthought
-- **Full provenance** — every registration run is logged and reproducible
-
-This pipeline reflects best practices for large-scale multimodal volumetric alignment in real experimental settings.
 
 ---
