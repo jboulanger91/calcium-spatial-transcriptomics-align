@@ -1,6 +1,8 @@
 # Multimodal volumetric stack registration (Napari + ANTs)
 
-This repository implements a **robust, reproducible pipeline for registering large 3D microscopy volumes across modalities** (e.g. confocal ↔ functional imaging). The workflow combines lightweight **interactive pre-alignment**, automated **quality control and montage construction**, and **multi-stage ANTs registration**.
+Pipeline for registering 2P functional calcium imaging and immunostained OCT-embedded 10um sections cut at the croystat. 
+Alignment is performed between the GCaMP temporally averaged signal acquired during functional imaging and GFP-immunostaining of the OCT sections. 
+The workflow combines **interactive pre-alignment** of the OCT sections, **quality control and montage construction**, and **multi-stage ANTs registration**.
 
 ---
 
@@ -24,16 +26,16 @@ High-level steps:
 ## Repository contents
 
 ### `napari_pre-alignment.py`
-Interactive Napari tool to quickly rotate and flip stacks so they share a common anatomical frame (rostro–caudal axis, left/right convention). A simple guide line and keyboard shortcuts allow fast correction of dozens of stacks.
+Interactive Napari tool to quickly rotate and flip OCT sections along rostro–caudal axis. 
 
 ### `annotate_damaged_sections.py`
 Automated QC utility that:
-- scans pre-aligned stacks
+- scans pre-aligned OCT sections stacks
 - generates a multi-page PDF showing a representative slice per stack
 - highlights damaged sections
 - identifies the **longest consecutive run of clean sections**
 
-This step ensures that downstream montage and registration are performed only on high-quality data.
+This step ensures that downstream montage and registration are performed only on high-quality data. 
 
 ### `montage_register_prealigned.py`
 Builds a clean reference volume from multiple adjacent stacks:
