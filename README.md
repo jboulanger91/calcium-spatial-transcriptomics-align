@@ -1,7 +1,9 @@
 # Multimodal volumetric stack registration (Napari + ANTs)
 
 Pipeline for registering 2P functional calcium imaging and immunostained OCT-embedded 10um sections cut at the croystat. 
+
 Alignment is performed between the GCaMP temporally averaged signal acquired during functional imaging and GFP-immunostaining of the OCT sections. 
+
 The workflow combines **interactive pre-alignment** of the OCT sections, **quality control and montage construction**, and **multi-stage ANTs registration**.
 
 ---
