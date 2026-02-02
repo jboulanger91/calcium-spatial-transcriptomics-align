@@ -7,8 +7,7 @@ ANTs registration runner for 3D TIFF stacks.
 What this script does
 ---------------------
 1) Reads two 3D TIFF stacks ("fixed" and "moving").
-2) Converts them to temporary NIfTI files using the voxel spacing stored in the TIFF/ITK header.
-   (No user-provided spacing is used; the TIFF header metadata is critical.)
+2) Converts them to temporary NIfTI files, writing voxel spacing from CLI arguments into the NIfTI headers.
 3) Runs ANTs `antsRegistration` using a multi-stage pipeline:
      Rigid → Similarity → Affine → SyN
    (parameters are kept verbatim in `run_ants_registration()` so the command is
@@ -29,9 +28,9 @@ The overlay is written as an ImageJ-compatible hyperstack with axes "TZCYX":
 
 Spacing conventions
 -------------------
-- No spacing is provided via CLI; the script uses the voxel size stored in the TIFF/ITK header.
-- The header spacing must be correct. If the script detects default or suspicious spacing (e.g., all 1.0 mm, <=0, or extremely large/small), it will print a warning.
-- ANTs/ITK spacing is interpreted in millimeters (mm).
+- Voxel spacing is provided explicitly on the command line in microns (µm).
+- The script writes these spacings into the temporary NIfTI headers (converted to millimeters, mm) before calling ANTs.
+- ANTs/ITK interprets spacing in millimeters (mm). If your spacings are wrong, registration will be wrong.
 
 Requirements
 ------------
@@ -43,6 +42,8 @@ Example
 python3 ANTs_register_local.py \
   --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/fish2/prealigned/exp_001_fish2_s05-s09_montaged_MattesMI_GCaMP_ch1.tif" \
   --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/2p_stacks/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif" \
+  --fixed-spacing-um 0.621 0.621 1.0 \
+  --moving-spacing-um 0.396 0.396 2.0 \
   --exp-id exp_001 \
   --fish 2 \
   --out-dir "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/ANTs_output" \
@@ -53,7 +54,7 @@ Notes
 - The script is intentionally "thin": it avoids hidden preprocessing so that
   registration changes are driven by explicit ANTs parameters.
 - Output naming is standardized to make iteration and comparison easy.
-- The TIFF header spacing must be correct and reflect the true voxel size. The script will warn if the header spacing looks suspicious.
+- The voxel spacings must be correct and reflect the true voxel size; the script does not read TIFF metadata for spacing.
 """
 
 import argparse
@@ -74,13 +75,14 @@ import numpy as np
 os.environ["PATH"] = "/Users/jonathanboulanger-weill/Packages/install/bin:" + os.environ.get("PATH", "")
 
 
-
-def read_tif_write_nii(tif_path: Path, nii_path: Path):
-    """Read a TIFF stack and write a NIfTI (.nii.gz), preserving header spacing.
+def read_tif_write_nii(tif_path: Path, nii_path: Path, spacing_um_xyz: tuple[float, float, float]):
+    """Read a TIFF stack and write a NIfTI (.nii.gz), forcing user spacing in header.
 
     This uses SimpleITK to read the TIFF. If the TIFF is multi-component
     (e.g., RGB or multi-channel), the script selects channel 0 so that ANTs
     receives a single scalar volume.
+
+    The voxel spacing is provided by the user (in microns, X Y Z) and is written to the NIfTI header (converted to mm).
 
     Parameters
     ----------
@@ -88,6 +90,8 @@ def read_tif_write_nii(tif_path: Path, nii_path: Path):
         Input TIFF path.
     nii_path : pathlib.Path
         Output NIfTI path.
+    spacing_um_xyz : tuple[float, float, float]
+        Voxel spacing in microns (X, Y, Z) to write into the NIfTI header.
 
     Returns
     -------
@@ -96,31 +100,16 @@ def read_tif_write_nii(tif_path: Path, nii_path: Path):
     """
     print(f"[I/O] Reading TIFF: {tif_path}")
     img = sitk.ReadImage(str(tif_path), sitk.sitkFloat32)
-    try:
-        print(f"[I/O] Header spacing (mm) from TIFF/ITK: {img.GetSpacing()}")
-        hdr_sp = img.GetSpacing()
-        # Warn if spacing is suspicious
-        suspicious = False
-        # 1. All ~1.0 mm
-        if all(abs(hdr_sp[i] - 1.0) < 1e-6 for i in range(3)):
-            suspicious = True
-        # 2. Any spacing <= 0
-        if any(hdr_sp[i] <= 0 for i in range(3)):
-            suspicious = True
-        # 3. Any spacing > 10.0 mm or < 1e-5 mm
-        if any(hdr_sp[i] > 10.0 or hdr_sp[i] < 1e-5 for i in range(3)):
-            suspicious = True
-        if suspicious:
-            print("[warn] TIFF header spacing looks default/suspicious. Ensure voxel size metadata is correct; ANTs will use the NIfTI header spacing.")
-    except Exception as e:
-        print(f"[I/O] Could not read spacing from TIFF/ITK header: {e}")
 
     if img.GetNumberOfComponentsPerPixel() > 1:
         # pick channel 0
         img = sitk.VectorIndexSelectionCast(img, 0)
 
-    # This is the spacing that will be written to the NIfTI header
-    print(f"[I/O] Final spacing to write (mm): {img.GetSpacing()}")
+    # Set spacing from user (convert microns to mm)
+    spacing_mm = tuple(float(s) / 1000.0 for s in spacing_um_xyz)
+    print(f"[I/O] Using user spacing (um XYZ): {spacing_um_xyz}")
+    print(f"[I/O] Writing NIfTI spacing (mm XYZ): {spacing_mm}")
+    img.SetSpacing(spacing_mm)
 
     print(f"[I/O] Writing NIfTI: {nii_path}")
     sitk.WriteImage(img, str(nii_path))
@@ -128,7 +117,7 @@ def read_tif_write_nii(tif_path: Path, nii_path: Path):
     # Sanity check: read back and print header spacing actually written
     try:
         img_check = sitk.ReadImage(str(nii_path))
-        print(f"[I/O] NIfTI header spacing written (mm): {img_check.GetSpacing()}")
+        print(f"[I/O] NIfTI header spacing verified (mm): {img_check.GetSpacing()}")
     except Exception as e:
         print(f"[I/O] Could not re-read NIfTI to verify spacing: {e}")
 
@@ -221,7 +210,7 @@ def locate_warped_output(prefix: Path, ants_dir: Path) -> Path:
     raise FileNotFoundError(f"Could not find ANTs warped output with prefix '{prefix.name}' in {ants_dir} or CWD.")
 
 
-def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warped_out: str, inverse_warped_out: str):
+def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warped_out: str, inverse_warped_out: str, init_center: bool = False):
     """Run ANTs `antsRegistration` with the project’s multi-stage parameters.
 
     Parameters
@@ -256,38 +245,42 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         "--output", f"[{out_prefix},{warped_out},{inverse_warped_out}]",
         "--write-composite-transform", "1",
 
-        # Initial transform (centered)
-        # This helps when there is a large initial translation between fixed/moving.
-        #"--initial-moving-transform", f"[{fixed_nii},{moving_nii},1]",
+        # Initial center of mass positioning 
+        "--initial-moving-transform", f"[{fixed_nii},{moving_nii},1]",
 
-        # Rigid
-        "--transform", "Rigid[0.1]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
-        "--convergence", "[1000x500x250x100,1e-6,10]",
+        # Rigid refines center of mass alignment and orients axes
+        "--transform", "Rigid[0.1]",  
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,1]",
+        "--convergence", "[1000x500x250x300,1e-6,10]",
         "--smoothing-sigmas", "3x2x1x0",
         "--shrink-factors", "8x4x2x1",
 
-        # Similarity (stronger to absorb global scale mismatch)
-        "--transform", "Similarity[0.3]",
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,0.25]",
-        "--convergence", "[3000x2000x1000x500x250,1e-6,10]",
-        "--smoothing-sigmas", "4x3x2x1x0",
-        "--shrink-factors", "16x8x4x2x1",
+        # Similarity deals with uniform scaling differences (abt 30%)
+        "--transform", "Similarity[0.02]",
+        "--metric", f"MI[{fixed_nii},{moving_nii},1,32,Regular,1]",
+        "--convergence", "[1000x500x250x300,1e-6,10]",
+        "--smoothing-sigmas", "3x2x1x0",
+        "--shrink-factors", "8x4x2x1",
 
-        # Affine (more global)
-        "--transform", "Affine[0.50]",  # slightly larger step
-        "--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,0.5]",
-        "--convergence", "[5000x4000x3000x2000x1500x1000x500x250,1e-6,10]",
-        "--smoothing-sigmas", "7x6x5x4x3x2x1x0",
-        "--shrink-factors", "128x64x32x16x8x4x2x1",
+        # Affine (fine-only polish; prevents big Z scaling)
+        #"--transform", "Affine[0.005]",
+        #"--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
+        #"--convergence", "[120x60x20x0,1e-6,10]",
+        #"--smoothing-sigmas", "1x0x0x0",
+        #"--shrink-factors", "2x1x1x1",
 
-        # SyN (conservative)
-        #--transform", "SyN[0.30,2,0]",                # step=0.30 (was 0.25)
-        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,8]",
-        #"--convergence","[500x400x300x200x150x100,1e-7,10]",
-        #"--smoothing-sigmas","6x5x4x3x2x1",
-        #"--shrink-factors","32x16x8x6x4x2",
+        # SyN (conservative) 0.08 yield too much deformation
+        "--transform", "SyN[0.05,2,0]",              
+        "--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
+        "--convergence","[120x100x80x60x40,1e-7,10]",
+        "--smoothing-sigmas","4x3x2x1x0",
+        "--shrink-factors","8x6x4x2x1",
     ]
+
+    if init_center:
+        # Insert after --write-composite-transform 1
+        idx = cmd.index("--write-composite-transform") + 2
+        cmd = cmd[:idx] + ["--initial-moving-transform", f"[{fixed_nii},{moving_nii},1]"] + cmd[idx:]
 
     print(
         ">> Running ANTs:",
@@ -311,6 +304,12 @@ def main():
     p.add_argument("--fish", required=True, type=int, help="Fish number (e.g. 2)")
 
     p.add_argument("--keep-nii", action='store_true', help="Keep temporary NIfTI files in output dir/intermediates")
+
+    # Add CLI arguments for voxel spacing (microns)
+    p.add_argument("--fixed-spacing-um", nargs=3, type=float, required=True, metavar=("X","Y","Z"), help="Fixed voxel spacing in microns (X Y Z). Written into the fixed NIfTI header.")
+    p.add_argument("--moving-spacing-um", nargs=3, type=float, required=True, metavar=("X","Y","Z"), help="Moving voxel spacing in microns (X Y Z). Written into the moving NIfTI header.")
+    # Optional: initial center transform
+    p.add_argument("--init-center", action="store_true", help="Add an initial center-of-mass transform: --initial-moving-transform [fixed,moving,1].")
 
     args = p.parse_args()
 
@@ -342,18 +341,23 @@ def main():
 
     try:
         print(">> Converting TIFF -> NIfTI (this may take a moment)...")
-        read_tif_write_nii(fixed_tif, fixed_nii)
-        read_tif_write_nii(moving_tif, moving_nii)
+        read_tif_write_nii(fixed_tif, fixed_nii, tuple(args.fixed_spacing_um))
+        read_tif_write_nii(moving_tif, moving_nii, tuple(args.moving_spacing_um))
 
-        # Print the spacings ANTs will actually use (taken from the NIfTI headers)
-        try:
-            fixed_hdr = sitk.ReadImage(str(fixed_nii))
-            moving_hdr = sitk.ReadImage(str(moving_nii))
-            print(f"[ANTs] Fixed spacing seen by ANTs (mm):  {fixed_hdr.GetSpacing()}")
-            print(f"[ANTs] Moving spacing seen by ANTs (mm): {moving_hdr.GetSpacing()}")
-            print("[note] If these spacings are wrong, fix the TIFF metadata or convert from a format that preserves voxel size; do not proceed with incorrect spacing.")
-        except Exception as e:
-            print(f"[ANTs] Could not read back NIfTI headers to report spacing: {e}")
+        # Read back NIfTI headers to report spacing to ANTs
+        fixed_hdr = sitk.ReadImage(str(fixed_nii))
+        moving_hdr = sitk.ReadImage(str(moving_nii))
+        print(f"[ANTs] Fixed spacing to ANTs (mm):  {fixed_hdr.GetSpacing()}")
+        print(f"[ANTs] Moving spacing to ANTs (mm): {moving_hdr.GetSpacing()}")
+        print("[warn] These spacings come from CLI inputs (converted um→mm). If they are wrong, registration will be wrong.")
+
+        # If --keep-nii, save intermediates even if ANTs fails
+        if args.keep_nii:
+            keep_dir = out_dir / "intermediates"
+            keep_dir.mkdir(exist_ok=True)
+            shutil.copy2(str(fixed_nii), keep_dir / f"{args.exp_id}_fish{args.fish}_fixed.nii.gz")
+            shutil.copy2(str(moving_nii), keep_dir / f"{args.exp_id}_fish{args.fish}_moving.nii.gz")
+            print(f"[save] Kept intermediates in: {keep_dir}")
 
         # ANTs prefix (ANTs will append names like <prefix>Warped.nii.gz)
         prefix = out_dir / f"{args.exp_id}_fish{args.fish}_"
@@ -365,6 +369,7 @@ def main():
             str(prefix),
             str(warped_final),
             str(inverse_warped_final),
+            args.init_center
         )
 
         if not warped_final.exists():
@@ -390,12 +395,16 @@ def main():
             "python3 ANTs_register_without_mask.py",
             f'--fixed "{fixed_tif}"',
             f'--moving "{moving_tif}"',
+            f'--fixed-spacing-um {" ".join(str(x) for x in args.fixed_spacing_um)}',
+            f'--moving-spacing-um {" ".join(str(x) for x in args.moving_spacing_um)}',
             f"--exp-id {args.exp_id}",
             f"--fish {args.fish}",
             f'--out-dir "{out_dir}"',
         ]
         if args.keep_nii:
             run_cmd_parts.append("--keep-nii")
+        if args.init_center:
+            run_cmd_parts.append("--init-center")
         run_command_example = " ".join(run_cmd_parts)
 
         record = {
@@ -404,8 +413,10 @@ def main():
             "fish": args.fish,
             "fixed_tif": str(fixed_tif),
             "moving_tif": str(moving_tif),
-            "fixed_spacing_mm_from_header": list(fixed_hdr.GetSpacing()) if 'fixed_hdr' in locals() else None,
-            "moving_spacing_mm_from_header": list(moving_hdr.GetSpacing()) if 'moving_hdr' in locals() else None,
+            "fixed_spacing_um_cli": list(args.fixed_spacing_um),
+            "moving_spacing_um_cli": list(args.moving_spacing_um),
+            "fixed_spacing_mm_written": list(fixed_hdr.GetSpacing()),
+            "moving_spacing_mm_written": list(moving_hdr.GetSpacing()),
             "out_dir": str(out_dir),
             "ants_prefix": str(prefix),
             "warped": str(warped_final),
@@ -460,13 +471,6 @@ def main():
         print("   ", overlay_tif_ts)
         print("   ", params_json_ts)
         print("   ", params_json_latest)
-
-        if args.keep_nii:
-            keep_dir = out_dir / "intermediates"
-            keep_dir.mkdir(exist_ok=True)
-            shutil.copy2(str(fixed_nii), keep_dir / f"{args.exp_id}_fish{args.fish}_fixed.nii.gz")
-            shutil.copy2(str(moving_nii), keep_dir / f"{args.exp_id}_fish{args.fish}_moving.nii.gz")
-            print(f"[save] Kept intermediates in: {keep_dir}")
 
     finally:
         if not args.keep_nii:
