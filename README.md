@@ -1,50 +1,39 @@
 # Multimodal volumetric stack registration (Napari + ANTs)
 
-Pipeline for registering 2P functional calcium imaging and immunostained OCT-embedded 10um sections cut at the croystat. 
-
-Alignment is performed between the GCaMP temporally averaged signal acquired during functional imaging and GFP-immunostaining of the OCT sections. 
-
-The workflow combines **interactive pre-alignment** of the OCT sections, **quality control and montage construction**, and **multi-stage ANTs registration**.
+This repository implements a pipeline for registering zebrafish two-photon (2P) functional calcium imaging volumes to immuno-DAPI stained OCT-embedded cryosection stacks. 
 
 ---
 
 ## Overview of the workflow
 
-**Input:** multi-channel 3D TIFF stacks (e.g. Olympus OIR converted to TIFF)
+**Input:** multi-channel 3D TIFF stacks from immunostained OCT-embedded cryosection (from Olympus OIR converted to TIFF)
 
 **Output:**
-- fully registered NIfTI volumes (fixed ↔ moving)
+- registered NIfTI volumes (fixed ↔ moving)
 - ImageJ-ready 2‑channel QC overlays
 - timestamped JSON records capturing the *exact ANTs command used*
 
-High-level steps:
+Pipeline steps:
 1. **Interactive pre-alignment (Napari)** — enforce consistent orientation
-2. **Visual QC & damaged-section detection** — identify usable blocks
-3. **Montage construction** — build a clean reference volume
-4. **ANTs registration** — Rigid → Similarity → Affine → SyN (non-linear)
+2. **Visual QC & damaged-section detection** — identify usable sub-stacks
+3. **Montage construction** — build a clean fixed volume
+4. **ANTs registration** — Rigid → Similarity → SyN
 
 ---
 
 ## Repository contents
 
 ### `napari_pre-alignment.py`
-Interactive Napari tool to quickly rotate and flip OCT sections along rostro–caudal axis. 
+Interactive Napari tool to quickly rotate and flip OCT sub-stacks along rostro–caudal axis. 
 
 ### `annotate_damaged_sections.py`
 Automated QC utility that:
-- scans pre-aligned OCT sections stacks
-- generates a multi-page PDF showing a representative slice per stack
-- highlights damaged sections
-- identifies the **longest consecutive run of clean sections**
-
-This step ensures that downstream montage and registration are performed only on high-quality data. 
+- scans pre-aligned OCT sub-stacks to identify the longest consecutive run of non-damaged sections
+- generates a PDF showing a representative slice per sub-stack
 
 ### `montage_register_prealigned.py`
 Builds a clean reference volume from multiple adjacent stacks:
-- loads pre-aligned stacks as `(Z, Y, X, C)`
-- skips sections marked as damaged
 - registers each stack to its neighbor using 2D rigid alignment on the central Z slice
-- applies the transform to all slices/channels
 - concatenates stacks into a single 3D montage
 
 ![Aligned sections after montage registration](aligned_sections.png)
@@ -54,8 +43,7 @@ Builds a clean reference volume from multiple adjacent stacks:
 Main registration driver based on **ANTs**:
 - converts fixed and moving TIFF stacks to NIfTI with **explicit voxel spacing**
 - runs a multi-stage ANTs pipeline:
-  **Rigid → Similarity → Affine → SyN**
-- supports large non-linear deformations (tissue expansion, bending)
+  **Rigid → Similarity → SyN**
 - writes:
   - canonical warped volumes
   - ImageJ-compatible 2‑channel overlays

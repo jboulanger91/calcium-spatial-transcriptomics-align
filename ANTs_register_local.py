@@ -269,8 +269,8 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         #"--smoothing-sigmas", "1x0x0x0",
         #"--shrink-factors", "2x1x1x1",
 
-        # SyN (conservative) 0.08 yield too much deformation
-        "--transform", "SyN[0.05,2,0]",              
+        # SyN (conservative) 0.02 yield too much deformation
+        "--transform", "SyN[0.02,2,0]",              
         "--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
         "--convergence","[120x100x80x60x40,1e-7,10]",
         "--smoothing-sigmas","4x3x2x1x0",
