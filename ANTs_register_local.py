@@ -262,19 +262,40 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         "--smoothing-sigmas", "3x2x1x0",
         "--shrink-factors", "8x4x2x1",
 
-        # Affine (fine-only polish; prevents big Z scaling)
-        #"--transform", "Affine[0.005]",
-        #"--metric", f"MI[{fixed_nii},{moving_nii},1,64,Regular,1]",
-        #"--convergence", "[120x60x20x0,1e-6,10]",
-        #"--smoothing-sigmas", "1x0x0x0",
-        #"--shrink-factors", "2x1x1x1",
+        # Affine (CC) – conservative edge snapping without big scale drift
+        # Best I ever had 
+        #"--transform", "Affine[0.01]",
+        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",   # radius 4 is a good start
+        #"--convergence","[400x200x100x50,1e-7,10]",
+        #"--smoothing-sigmas","2x1x0x0",
+        #"--shrink-factors","8x4x2x1",
 
-        # SyN (conservative) 0.02 yield too much deformation
-        "--transform", "SyN[0.02,2,0]",              
+        "--transform", "Affine[0.01]",
         "--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
-        "--convergence","[120x100x80x60x40,1e-7,10]",
-        "--smoothing-sigmas","4x3x2x1x0",
-        "--shrink-factors","8x6x4x2x1",
+        "--convergence","[600x300x150x75x30,1e-7,10]",
+        "--smoothing-sigmas","2x1x0x0x0",
+        "--shrink-factors","8x4x2x1x1",
+
+        # SyN (conservative) 0.02 yield too very little deformation
+        #"--transform", "SyN[0.02,2,0]",              
+        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
+        #"--convergence","[120x100x80x60x40,1e-7,10]",
+        #"--smoothing-sigmas","4x3x2x1x0",
+        #"--shrink-factors","8x6x4x2x1",
+
+        # SyN (more conservative: smoother field, less local warping)
+        #"--transform", "SyN[0.03,6,3]",
+        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,6]",
+        #"--convergence","[80x60x40x20x10,1e-7,10]",
+        #"--smoothing-sigmas","5x4x3x2x1",
+        #"--shrink-factors","10x8x4x2x1",
+
+        # SyN (moderate, robust): not bad but I still believe the affine can be improved
+        #"--transform",        "SyN[0.08,3,0]",
+        #"--metric",           f"CC[{fixed_nii},{moving_nii},1,4]",
+        #"--convergence",      "[150x120x90x60x30,1e-7,10]",
+        #"--smoothing-sigmas", "4x3x2x1x0",
+        #"--shrink-factors",   "8x6x4x2x1",
     ]
 
     if init_center:
