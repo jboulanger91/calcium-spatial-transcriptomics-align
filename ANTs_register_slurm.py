@@ -71,9 +71,6 @@ import SimpleITK as sitk
 import tifffile as tiff
 import numpy as np
 
-# If you have a local ANTs install you want to prepend, uncomment and edit:
-os.environ["PATH"] = "/Users/jonathanboulanger-weill/Packages/install/bin:" + os.environ.get("PATH", "")
-
 
 def read_tif_write_nii(tif_path: Path, nii_path: Path, spacing_um_xyz: tuple[float, float, float]):
     """Read a TIFF stack and write a NIfTI (.nii.gz), forcing user spacing in header.
@@ -278,9 +275,16 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         #"--shrink-factors","8x4x2x1x1",
 
         # #3  (CC) – allow ~10–15 µm adjustment safely
-        "--transform", "Affine[0.02]",        # was 0.01
-        "--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
-        "--convergence","[800x400x200x100x50,1e-7,10]",
+        #"--transform", "Affine[0.02]",        # was 0.01
+        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
+        #"--convergence","[800x400x200x100x50,1e-7,10]",
+        #"--smoothing-sigmas","2x1x0x0x0",
+        #"--shrink-factors","8x4x2x1x1",
+
+        # #4 (CC) – tighter radius, more local but more iterations
+        "--transform", "Affine[0.01]",
+        "--metric",    f"CC[{fixed_nii},{moving_nii},1,2]",   # was 4
+        "--convergence","[800x400x200x100x50,1e-7,10]",       # more fine iterations
         "--smoothing-sigmas","2x1x0x0x0",
         "--shrink-factors","8x4x2x1x1",
 

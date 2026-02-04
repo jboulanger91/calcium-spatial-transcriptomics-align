@@ -1,5 +1,6 @@
 name: stx-py310
 channels:
+  - SimpleITK
   - conda-forge
   - bioconda
 dependencies:
@@ -36,6 +37,9 @@ dependencies:
   - rasterio
   - pyproj
   - rtree
+
+  # ITK / registration IO
+  - simpleitk
 
   # Java runtime for Bio-Formats through scyjava/JPype
   - openjdk
