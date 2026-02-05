@@ -278,11 +278,11 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         #"--shrink-factors","8x4x2x1x1",
 
         # #3  (CC) – allow ~10–15 µm adjustment safely
-        "--transform", "Affine[0.02]",        # was 0.01
-        "--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
-        "--convergence","[800x400x200x100x50,1e-7,10]",
-        "--smoothing-sigmas","2x1x0x0x0",
-        "--shrink-factors","8x4x2x1x1",
+        #"--transform", "Affine[0.02]",        # was 0.01
+        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
+        #"--convergence","[800x400x200x100x50,1e-7,10]",
+        #"--smoothing-sigmas","2x1x0x0x0",
+        #"--shrink-factors","8x4x2x1x1",
 
         # SyN (conservative) 0.02 yield too very little deformation
         #"--transform", "SyN[0.02,2,0]",              

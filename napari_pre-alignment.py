@@ -58,22 +58,23 @@ import napari
 # --------------------------- USER SETTINGS ---------------------------
 # Global identifiers used for ALL output names
 exp_id = "exp_001"   # e.g. "exp_001" or "exp1_110425"
-fish = 1             # integer
+fish = 4             # integer
 run_id = f"{exp_id}_fish{fish}"
 
 # Fish root folder (contains native/ and prealigned/)
 fish_root = (
     "/Users/jonathanboulanger-weill/Harvard University Dropbox/"
     "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/"
-    "data/exp1_110425/oct_confocal_stacks/fish1/"
+    "data/exp1_110425/oct_confocal_stacks/fish4/"
 )
 
 native_dir = os.path.join(fish_root, "native")
 prealigned_dir = os.path.join(fish_root, "prealigned")
 
 # Input naming
-prefix = "20x_fish1_slide1_DAPI_GFP488_RFP594_fish1-s1-"
-indices = list(range(1, 25 + 1))  # 1..25
+#prefix = "20x_fish1_slide1_DAPI_GFP488_RFP594_fish1-s1-"
+prefix = "20x-4us-1um_DAPI_GFP488_RFP594_fish4-s1_"
+indices = list(range(1, 30))  # 1..30
 
 # Output naming
 out_suffix = "_pre.tif"

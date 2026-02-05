@@ -1,12 +1,12 @@
 # Multimodal volumetric stack registration (Napari + ANTs)
 
-This repository implements a pipeline for registering zebrafish two-photon (2P) functional calcium imaging volumes to immuno-DAPI stained OCT-embedded cryosection stacks. 
+This repository implements a pipeline for registering zebrafish two-photon (2P) functional calcium imaging volumes to immuno-DAPI stained OCT-embedded cryosection stacks.
 
 ---
 
 ## Overview of the workflow
 
-**Input:** multi-channel 3D TIFF stacks from immunostained OCT-embedded cryosection (from Olympus OIR converted to TIFF)
+**Input:** multi-channel 3D TIFF stacks from immunostained OCT-embedded cryosection (e.g. Olympus OIR converted to TIFF)
 
 **Output:**
 - registered NIfTI volumes (fixed ↔ moving)
@@ -14,27 +14,50 @@ This repository implements a pipeline for registering zebrafish two-photon (2P) 
 - timestamped JSON records capturing the *exact ANTs command used*
 
 Pipeline steps:
-1. **Interactive pre-alignment (Napari)** — enforce consistent orientation
-2. **Visual QC & damaged-section detection** — identify usable sub-stacks
-3. **Montage construction** — build a clean fixed volume
-4. **ANTs registration** — Rigid → Similarity → SyN
+1. **Pre-alignment (Napari, local)** — enforce consistent orientation across stacks.
+2. **QC & annotation (Napari, local)** — mark damaged sections and select an optimal Z slice (`best_z`) per section.
+3. **Montage construction (local)** — trim each stack around `best_z`, perform 2D rigid alignment, and concatenate into a reference volume.
+4. **ANTs registration (SLURM)** — run multi-stage 3D registration (Rigid → Similarity → SyN) on the assembled montage.
 
 ---
 
 ## Repository contents
 
 ### `napari_pre-alignment.py`
-Interactive Napari tool to quickly rotate and flip OCT sub-stacks along rostro–caudal axis. 
+Interactive Napari tool to quickly rotate and flip OCT sub-stacks along the rostro–caudal axis.
 
 ### `annotate_damaged_sections.py`
-Automated QC utility that:
-- scans pre-aligned OCT sub-stacks to identify the longest consecutive run of non-damaged sections
-- generates a PDF showing a representative slice per sub-stack
+Interactive QC + annotation utility (Napari + PDF):
+
+- **Step 1 (interactive, Napari)**:
+  - open each pre-aligned sub-stack
+  - annotate whether the stack is **damaged** or **good**
+  - for good stacks, select the **best Z slice** (`best_z`) with the strongest signal
+    (this slice is later used for montage alignment)
+
+- **Step 2 (report)**:
+  - generate a PDF QC report showing:
+    - damaged stacks shaded in red
+    - the longest consecutive run of non-damaged stacks outlined in yellow
+    - thumbnails taken from the annotated `best_z` slice
+      (fallback to the middle slice if not annotated)
+
+Annotations are saved to **`section_annotations.tsv`**.
+`damaged_stacks.txt` is automatically kept in sync for backwards compatibility.
 
 ### `montage_register_prealigned.py`
 Builds a clean reference volume from multiple adjacent stacks:
-- registers each stack to its neighbor using 2D rigid alignment on the central Z slice
-- concatenates stacks into a single 3D montage
+
+- selects the **longest contiguous run of non-damaged sections**
+  (based on `section_annotations.tsv` / `damaged_stacks.txt`)
+- for each stack:
+  - trims to a fixed Z-window around the annotated **`best_z`** slice
+    (user-defined number of slices before and after)
+- performs 2D rigid registration using the **annotated `best_z` slice**
+  (registration channel configurable)
+- applies the resulting 2D transform to **all Z slices and all channels**
+  in the trimmed block
+- concatenates all aligned blocks along Z to form the final montage
 
 ![Aligned sections after montage registration](aligned_sections.png)
 *Example output of the montage step, showing multiple adjacent sections rigidly aligned prior to ANTs registration.*
@@ -73,15 +96,20 @@ python napari_pre-alignment.py
 
 Interactively rotate/flip stacks so all volumes share a consistent orientation before automated processing.
 
-
 ### 2) QC and damaged-section detection
 
 ```bash
-python3 annotate_damaged_sections.py
+# interactive annotation (Napari)
+python3 annotate_damaged_sections.py annotate
+
+# generate/update the PDF report from existing annotations
+python3 annotate_damaged_sections.py report
+
+# do both (annotate, then report)
+python3 annotate_damaged_sections.py all
 ```
 
-Produces a PDF report and a `damaged_stacks.txt` file used by the montage step.
-
+Creates/updates `section_annotations.tsv`, keeps `damaged_stacks.txt` in sync for backwards compatibility, and writes a PDF QC report.
 
 ### 3) Montage clean sections
 
@@ -89,29 +117,45 @@ Produces a PDF report and a `damaged_stacks.txt` file used by the montage step.
 python3 montage_register_prealigned.py
 ```
 
-Builds a single, clean reference volume from the longest contiguous run of non-damaged stacks.
+Builds a single, clean reference volume from the longest contiguous run of non-damaged stacks, trimming each sub-stack around the annotated `best_z` slice and using that slice for 2D rigid alignment.
 
-
-### 4) Multimodal registration with ANTs
+### 4) Multimodal registration with ANTs (SLURM cluster)
 
 ```bash
-python3 ANTs_register_without_mask.py \
+sbatch slurm/run_ants_register.sbatch \
   --fixed  /path/to/fixed_montage.tif \
-  --moving /path/to/moving_stack.tif \
-  --fixed-spacing-um  0.621 0.621 1.0 \
-  --moving-spacing-um 0.396 0.396 2.0 \
-  --exp-id exp_001 \
-  --fish 2 \
-  --out-dir /path/to/ANTs_output
+  --moving /path/to/moving_stack.tif
 ```
 
-Each run produces:
-- `expX_fishY_warped.nii.gz` (latest result)
-- `expX_fishY_fixed_warped_2ch.tif` (latest overlay)
-- `expX_fishY_<timestamp>_overlay.tif`
-- `expX_fishY_<timestamp>_ants_params.json`
+This step is computationally intensive and intended to run on the SLURM cluster. It performs full 3D registration and writes:
+- warped NIfTI volumes
+- ImageJ-compatible QC overlays
+- timestamped JSON files capturing the exact `antsRegistration` command
 
-The JSON file records the **full ANTs command**, input paths, spacings, and outputs, enabling exact reproduction of any run.
+---
+
+## Running on a SLURM cluster
+
+Only the ANTs registration step is intended to run on the SLURM cluster.
+
+This repository includes SLURM helper scripts/templates (see the `slurm/` folder) to:
+- activate the project environment on the cluster
+- run 3D ANTs registration with appropriate CPU/RAM/time requests
+
+The montage construction step is typically run locally, while the computationally intensive ANTs registration is submitted to the SLURM cluster.
+
+Typical usage:
+```bash
+# run montage locally
+python3 montage_register_prealigned.py
+
+# submit ANTs registration to the cluster
+sbatch slurm/run_ants_register.sbatch \
+  --fixed /path/to/fixed_montage.tif \
+  --moving /path/to/moving_stack.tif
+```
+
+Adjust partition, account, walltime, and memory settings in the `.sbatch` files to match your cluster configuration.
 
 ---
 
@@ -126,4 +170,4 @@ conda activate stx-py310
 
 This installs ANTs dependencies, Napari, scientific Python libraries, and Bio-Formats support.
 
----
+---</file>

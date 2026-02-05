@@ -50,17 +50,17 @@ from typing import Optional, Tuple, List, Dict, Any
 # ===================== USER SETTINGS =====================
 # Global identifiers used for ALL input/output names
 exp_id = "exp_001"   # e.g. "exp_001" or "exp1_110425"
-fish   = 1           # integer fish number
+fish   = 4           # integer fish number
 
 # Folder that contains prealigned stacks named like:
 #   exp_001_fish1_s01_pre.tif
 folder = Path(
     "/Users/jonathanboulanger-weill/Harvard University Dropbox/"
     "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/"
-    "exp1_110425/oct_confocal_stacks/fish1/prealigned"
+    "exp1_110425/oct_confocal_stacks/fish4/prealigned"
 )
 
-# Sections to consider (s01..s25)
+# Sections to consider (s01..s30)
 indices = list(range(1, 30 + 1))
 
 # Input naming convention

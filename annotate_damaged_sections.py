@@ -51,7 +51,7 @@ import napari
 pre_rc_dir = Path(
     "/Users/jonathanboulanger-weill/Harvard University Dropbox/"
     "Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/"
-    "data/exp1_110425/oct_confocal_stacks/fish1/prealigned"
+    "data/exp1_110425/oct_confocal_stacks/fish4/prealigned"
 )
 
 # Files inside pre_rc_dir
@@ -596,7 +596,6 @@ def main():
 
     if mode == "annotate":
         annotate_with_napari(pre_rc_dir)
-        make_report(pre_rc_dir)   # <-- add this line
     elif mode == "report":
         make_report(pre_rc_dir)
     elif mode == "all":
