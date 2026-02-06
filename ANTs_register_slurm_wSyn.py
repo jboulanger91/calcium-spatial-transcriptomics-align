@@ -268,12 +268,12 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         #"--smoothing-sigmas","2x1x0x0",
         #"--shrink-factors","8x4x2x1",
 
-        # #2 Not a crazy improvement over the above, but still better
-        #"--transform", "Affine[0.01]",
-        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
-        #"--convergence","[600x300x150x75x30,1e-7,10]",
-        #"--smoothing-sigmas","2x1x0x0x0",
-        #"--shrink-factors","8x4x2x1x1",
+        # #2 Not a crazy improvement over the above, but still better: new baseline
+        "--transform", "Affine[0.01]",
+        "--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
+        "--convergence","[600x300x150x75x30,1e-7,10]",
+        "--smoothing-sigmas","2x1x0x0x0",
+        "--shrink-factors","8x4x2x1x1",
 
         # #3  (CC) – complete overshoot
         #"--transform", "Affine[0.02]",        # was 0.01
@@ -297,20 +297,13 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
         #"--smoothing-sigmas","2x1x0x0x0x0.5",   # tiny smoothing at the very end
         #"--shrink-factors","8x4x2x1x1x1",
 
-        # 6 (CC) more edge snapping, next in line if #5 is not good enough
-        "--transform", "Affine[0.004]",
-        "--metric",    f"CC[{fixed_nii},{moving_nii},1,5]",
-        "--convergence","[600x300x150x75x40x20,1e-7,10]",
-        "--smoothing-sigmas","2x1x0x0x0x0",
-        "--shrink-factors","8x4x2x1x1x1",
-
         ##########################
-        # SyN (edge refinement only; very constrained)
-        #"--transform",  "SyN[0.08,2,0]",               # small step; 2 update field smoothing
-        #"--metric",     f"CC[{fixed_nii},{moving_nii},1,4]",
-        #"--convergence","[120x80x40x0,1e-7,10]",       # short; stops before it gets creative
-        #"--smoothing-sigmas","3x2x1x0",
-        #"--shrink-factors","8x4x2x1",
+        # SyN (edge refinement only; very constrained) 
+        "--transform",  "SyN[0.08,2,0]",               # small step; 2 update field smoothing
+        "--metric",     f"CC[{fixed_nii},{moving_nii},1,4]",
+        "--convergence","[120x80x40x0,1e-7,10]",       # short; stops before it gets creative
+        "--smoothing-sigmas","3x2x1x0",
+        "--shrink-factors","8x4x2x1",
 
         # SyN (conservative) 0.02 yield too very little deformation
         #"--transform", "SyN[0.02,2,0]",              

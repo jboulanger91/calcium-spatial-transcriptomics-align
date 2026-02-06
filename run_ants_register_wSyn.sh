@@ -80,7 +80,7 @@ cp "${MOVING}" "${WORKDIR}/moving.tif"
 # ----------------------------
 echo "Starting ANTs registration"
 
-python3 ANTs_register_slurm.py \
+python3 ANTs_register_slurm_wSyn.py \
   --fixed "${WORKDIR}/fixed.tif" \
   --moving "${WORKDIR}/moving.tif" \
   --fixed-spacing-um 0.621 0.621 1.0 \

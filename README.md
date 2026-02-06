@@ -142,7 +142,7 @@ This repository includes SLURM helper scripts/templates (see the `slurm/` folder
 - activate the project environment on the cluster
 - run 3D ANTs registration with appropriate CPU/RAM/time requests
 
-The montage construction step is typically run locally, while the computationally intensive ANTs registration is submitted to the SLURM cluster.
+The montage construction step is typically run locally, while the ANTs registration is submitted to the SLURM cluster.
 
 Typical usage:
 ```bash
@@ -151,8 +151,6 @@ python3 montage_register_prealigned.py
 
 # submit ANTs registration to the cluster
 sbatch slurm/run_ants_register.sbatch \
-  --fixed /path/to/fixed_montage.tif \
-  --moving /path/to/moving_stack.tif
 ```
 
 Adjust partition, account, walltime, and memory settings in the `.sbatch` files to match your cluster configuration.
