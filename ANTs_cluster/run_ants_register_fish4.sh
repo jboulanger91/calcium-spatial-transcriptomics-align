@@ -53,11 +53,11 @@ echo "STORE:         ${STORE}"
 DATADIR="${SLURM_SUBMIT_DIR}/data"    
 OUTDIR="${SLURM_SUBMIT_DIR}/output"   
 
-FIXED="${DATADIR}/exp_001_fish2_s05-s09_montaged_MattesMI_GCaMP_ch1.tif"
-MOVING="${DATADIR}/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif"
+FIXED="${DATADIR}/exp_001_fish4_s05-s13_montaged_MattesMI_GCaMP_ch1.tif"
+MOVING="${DATADIR}/2025-10-14_11-59-26_fish004_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif"
 
 EXP_ID="exp_001"
-FISH="2"
+FISH="4"
 
 mkdir -p "${OUTDIR}"
 
@@ -80,7 +80,7 @@ cp "${MOVING}" "${WORKDIR}/moving.tif"
 # ----------------------------
 echo "Starting ANTs registration"
 
-python3 ANTs_register_slurm.py \
+python3 ANTs_register_slurm_sim0.02.py \
   --fixed "${WORKDIR}/fixed.tif" \
   --moving "${WORKDIR}/moving.tif" \
   --fixed-spacing-um 0.621 0.621 1.0 \
