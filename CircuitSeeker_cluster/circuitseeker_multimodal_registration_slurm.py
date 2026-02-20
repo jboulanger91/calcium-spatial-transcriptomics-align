@@ -138,7 +138,7 @@ def otsu_fill_mask(
 def _to_uint16_for_imagej(vol_zyx: np.ndarray) -> np.ndarray:
     """Convert a ZYX volume to uint16 for ImageJ overlays (robust display scaling)."""
     if np.issubdtype(vol_zyx.dtype, np.floating):
-        p1, p99 = np.percentile(vol_zyx, (1, 99))
+        p1, p99 = np.percentile(vol_zyx, (0.1, 99.9))
         if p99 > p1:
             v = (vol_zyx - p1) / (p99 - p1)
         else:

@@ -51,10 +51,10 @@ echo "STORE:         ${STORE}"
 # Put your data somewhere you can read from: SCRATCH or STORE.
 # EDIT THESE to match where you actually copied the TIFFs on MCMeSU.
 DATADIR="${SLURM_SUBMIT_DIR}/data"    
-OUTDIR="${SLURM_SUBMIT_DIR}/output"   
+OUTDIR="${SLURM_SUBMIT_DIR}/ANTs_output"   
 
-FIXED="${DATADIR}/exp_001_fish2_s05-s09_montaged_MattesMI_GCaMP_ch1.tif"
-MOVING="${DATADIR}/exp_001_fish2_moving_pre-deform_unsharp_021326.tif"
+FIXED="${DATADIR}/exp_001_fish2_s07_pre_GCaMP_cropped.tif"
+MOVING="${DATADIR}/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz_enh.tif"
 
 EXP_ID="exp_001"
 FISH="2"
@@ -80,7 +80,7 @@ cp "${MOVING}" "${WORKDIR}/moving.tif"
 # ----------------------------
 echo "Starting ANTs registration"
 
-python3 ANTs_register_slurm_syncc0.06.py \
+python3 ANTs_register_slurm_sim0.02-syncc0.15.py \
   --fixed "${WORKDIR}/fixed.tif" \
   --moving "${WORKDIR}/moving.tif" \
   --fixed-spacing-um 0.621 0.621 1.0 \

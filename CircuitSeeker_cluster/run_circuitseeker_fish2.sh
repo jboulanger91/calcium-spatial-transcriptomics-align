@@ -62,7 +62,7 @@ DATADIR="${SLURM_SUBMIT_DIR}/data"
 OUTDIR="${SLURM_SUBMIT_DIR}/CircuitSeeker_output"
 
 FIXED="${DATADIR}/exp_001_fish2_s07_pre_GCaMP_cropped.tif"
-MOVING="${DATADIR}/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz.tif"
+MOVING="${DATADIR}/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz_enh.tif"
 
 EXP_ID="exp_001"
 FISH="2"
@@ -103,13 +103,13 @@ python3 "${SLURM_SUBMIT_DIR}/circuitseeker_multimodal_registration_slurm.py" \
   --pad-um 20 \
   --save-padded-tiffs \
   --mask-sigma 2 \
-  --mask-dilate-iter 64 \
+  --mask-dilate-iter 32 \
   --mask-close-shape 5 5 5 \
-  --alignment-spacing 2.0 \
+  --alignment-spacing 2 \
   --shrink-factors 2 \
-  --smooth-sigmas 8.0 \
-  --iterations 400 \
-  --control-point-spacing 10.0 \
+  --smooth-sigmas 8 \
+  --iterations 2000 \
+  --control-point-spacing 8 \
   --control-point-levels 1 2 4 8 16 32 64 \
   --verbose
 

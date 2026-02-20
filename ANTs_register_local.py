@@ -40,7 +40,7 @@ Requirements
 Example
 -------
 python3 ANTs_register_local.py \
-  --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/fish2/prealigned/exp_001_fish2_s05-s09_montaged_MattesMI_GCaMP_ch1.tif" \
+  --fixed "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/oct_confocal_stacks/fish2/prealigned/exp_001_fish2_s07_pre_GCaMP_cropped.tif" \
   --moving "/Users/jonathanboulanger-weill/Harvard University Dropbox/Jonathan Boulanger-Weill/Projects/calcium-spatial-transcriptomics-align/data/exp1_110425/2p_stacks/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz_enh.tif" \
   --fixed-spacing-um 0.621 0.621 1.0 \
   --moving-spacing-um 0.396 0.396 2.0 \
@@ -264,46 +264,12 @@ def run_ants_registration(fixed_nii: str, moving_nii: str, out_prefix: str, warp
 
         # #1 Affine (CC) – conservative edge snapping without big scale drift
         # Best I ever had 
+        # Affine (MI) – conservative, prevents CC-driven weird scaling/shear
         #"--transform", "Affine[0.01]",
-        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",   # radius 4 is a good start
-        #"--convergence","[400x200x100x50,1e-7,10]",
-        #"--smoothing-sigmas","2x1x0x0",
-        #"--shrink-factors","8x4x2x1",
-
-        # #2 Not a crazy improvement over the above, but still better
-        #"--transform", "Affine[0.01]",
-        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
-        #"--convergence","[600x300x150x75x30,1e-7,10]",
-        #"--smoothing-sigmas","2x1x0x0x0",
-        #"--shrink-factors","8x4x2x1x1",
-
-        # #3  (CC) – allow ~10–15 µm adjustment safely
-        #"--transform", "Affine[0.02]",        # was 0.01
-        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
-        #"--convergence","[800x400x200x100x50,1e-7,10]",
-        #"--smoothing-sigmas","2x1x0x0x0",
-        #"--shrink-factors","8x4x2x1x1",
-
-        # SyN (conservative) 0.02 yield too very little deformation
-        #"--transform", "SyN[0.02,2,0]",              
-        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,4]",
-        #"--convergence","[120x100x80x60x40,1e-7,10]",
-        #"--smoothing-sigmas","4x3x2x1x0",
-        #"--shrink-factors","8x6x4x2x1",
-
-        # SyN (more conservative: smoother field, less local warping)
-        #"--transform", "SyN[0.03,6,3]",
-        #"--metric",    f"CC[{fixed_nii},{moving_nii},1,6]",
-        #"--convergence","[80x60x40x20x10,1e-7,10]",
-        #"--smoothing-sigmas","5x4x3x2x1",
-        #"--shrink-factors","10x8x4x2x1",
-
-        # SyN (moderate, robust): not bad but I still believe the affine can be improved
-        #"--transform",        "SyN[0.08,3,0]",
-        #"--metric",           f"CC[{fixed_nii},{moving_nii},1,4]",
-        #"--convergence",      "[150x120x90x60x30,1e-7,10]",
-        #"--smoothing-sigmas", "4x3x2x1x0",
-        #"--shrink-factors",   "8x6x4x2x1",
+        #"--metric", f"MI[{fixed_nii},{moving_nii},1,256,Regular,1]",
+        #"--convergence", "[400x200x100x50,1e-6,10]",
+        #"--smoothing-sigmas", "2x1x0x0",
+        #"--shrink-factors", "8x4x2x1",
     ]
 
     if init_center:

@@ -265,7 +265,7 @@ def main() -> None:
         stacked = stacked[np.newaxis, ...]  # (T,Z,C,Y,X)
 
         print(f"[save] Writing overlay TIFF: {overlay_out}")
-        tiff.imwrite(str(overlay_out), stacked, bigtiff=True, imagej=True, metadata={"axes": "TZCYX"})
+        tiff.imwrite(str(overlay_out), stacked, bigtiff=False, imagej=True, metadata={"axes": "TZCYX"})
 
         print(">> Done. Outputs:")
         print("   ", warped_out)
