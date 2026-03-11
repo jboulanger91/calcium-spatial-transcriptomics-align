@@ -58,3 +58,4 @@ dependencies:
       - bioio-bioformats
       - jpype1
       - fsspec
+      - bigstream

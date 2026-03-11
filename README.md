@@ -1,4 +1,4 @@
-# Multimodal volumetric stack registration (Napari + ANTs)
+# Multimodal volumetric stack registration (Napari + BigWarp + BigStream)
 
 This repository implements a pipeline for registering zebrafish two-photon (2P) functional calcium imaging volumes to immuno-DAPI stained OCT-embedded cryosection stacks.
 
@@ -16,8 +16,8 @@ This repository implements a pipeline for registering zebrafish two-photon (2P) 
 Pipeline steps:
 1. **Pre-alignment (Napari, local)** — enforce consistent orientation across stacks.
 2. **QC & annotation (Napari, local)** — mark damaged sections and select an optimal Z slice (`best_z`) per section.
-3. **Montage construction (local)** — trim each stack around `best_z`, perform 2D rigid alignment, and concatenate into a reference volume.
-4. **ANTs registration (SLURM)** — run multi-stage 3D registration (Rigid → Similarity → SyN) on the assembled montage.
+3. **Section alignment (BigWarp, local)** — align adjacent sections in Fiji/BigWarp and export transforms.
+4. **Volume registration (BigStream, local/cluster)** — apply global + piecewise transforms and export QC overlays + metadata.
 
 ---
 
@@ -48,29 +48,19 @@ Annotations are saved to **`section_annotations.tsv`**.
 ### `montage_register_prealigned.py`
 Builds a clean reference volume from multiple adjacent stacks:
 
-- selects the **longest contiguous run of non-damaged sections**
-  (based on `section_annotations.tsv` / `damaged_stacks.txt`)
-- for each stack:
-  - trims to a fixed Z-window around the annotated **`best_z`** slice
-    (user-defined number of slices before and after)
-- performs 2D rigid registration using the **annotated `best_z` slice**
-  (registration channel configurable)
-- applies the resulting 2D transform to **all Z slices and all channels**
-  in the trimmed block
-- concatenates all aligned blocks along Z to form the final montage
+- selects the **longest contiguous run of non-damaged sections** (from `section_annotations.tsv`)
+- trims each stack to a fixed Z-window around **`best_z`**
+- **aligned sections are now the product of BigWarp** (Fiji) transforms
+- concatenates aligned blocks along Z to form the final montage
 
 ![Aligned sections after montage registration](aligned_sections.png)
 *Example output of the montage step, showing multiple adjacent sections rigidly aligned prior to ANTs registration.*
 
-### `ANTs_register_without_mask.py`
-Main registration driver based on **ANTs**:
-- converts fixed and moving TIFF stacks to NIfTI with **explicit voxel spacing**
-- runs a multi-stage ANTs pipeline:
-  **Rigid → Similarity → SyN**
-- writes:
-  - canonical warped volumes
-  - ImageJ-compatible 2‑channel overlays
-  - **timestamped JSON files containing the full `antsRegistration` command** for reproducibility
+### `BigStream_register_*.py`
+Registration drivers based on **BigStream**:
+- run global + distributed piecewise alignment
+- write ImageJ-compatible 2‑channel overlays
+- write timestamped JSON configs (paths + parameters) for reproducibility
 
 ---
 
@@ -119,19 +109,6 @@ python3 montage_register_prealigned.py
 
 Builds a single, clean reference volume from the longest contiguous run of non-damaged stacks, trimming each sub-stack around the annotated `best_z` slice and using that slice for 2D rigid alignment.
 
-### 4) Multimodal registration with ANTs (SLURM cluster)
-
-```bash
-sbatch slurm/run_ants_register.sbatch \
-  --fixed  /path/to/fixed_montage.tif \
-  --moving /path/to/moving_stack.tif
-```
-
-This step is computationally intensive and intended to run on the SLURM cluster. It performs full 3D registration and writes:
-- warped NIfTI volumes
-- ImageJ-compatible QC overlays
-- timestamped JSON files capturing the exact `antsRegistration` command
-
 ---
 
 ## Running on a SLURM cluster
@@ -157,6 +134,13 @@ Adjust partition, account, walltime, and memory settings in the `.sbatch` files 
 
 ---
 
+## References
+
+- BigStream (Janelia SciComp): https://github.com/JaneliaSciComp/bigstream
+- Marquez-Legorreta *et al.* (bioRxiv, 2026): *Whole-Brain Co-Mapping of Gene Expression and Neuronal Activity at Cellular Resolution in Behaving Zebrafish*. https://doi.org/10.64898/2026.02.07.704095
+
+---
+
 ## Environment
 
 A Conda environment file is provided:
@@ -168,4 +152,4 @@ conda activate stx-py310
 
 This installs ANTs dependencies, Napari, scientific Python libraries, and Bio-Formats support.
 
----</file>
+---
