@@ -37,46 +37,6 @@ Global + distributed piecewise registration drivers using BigStream (notebook on
 
 ---
 
-## Typical usage
-
-### 0) Convert raw data to TIFF
-
-Convert raw files (e.g. `.oir`) to TIFF using Fiji → Process → Batch → Convert.
-
----
-
-### 1) Pre-align stacks (Napari)
-
-```bash
-python pre-processing/napari_pre-alignment.py
-```
-
-### 2) QC and damaged-section detection
-
-```bash
-# interactive annotation (Napari)
-python3 pre-processing/annotate_damaged_sections.py annotate
-
-# generate/update the PDF report from existing annotations
-python3 pre-processing/annotate_damaged_sections.py report
-
-# do both (annotate, then report)
-python3 pre-processing/annotate_damaged_sections.py all
-```
-
-### 3) Montage clean sections
-
-```bash
-python3 pre-processing/montage_register_prealigned.py
-```
-
-Builds a clean reference volume from non-damaged stacks.
-
-### 4) Register volumes with BigStream (local or SLURM)
-
-```
----
-
 ## Environment
 
 ```bash
