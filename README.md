@@ -50,8 +50,10 @@ Global + distributed piecewise registration drivers using **BigStream** (local w
 ## Environment
 
 ```bash
-conda activate bigstream
-pip install bigstream
+# create and activate the environment
+conda env create -f stx_py310.yaml
+conda activate stx_py310
+
 ```
 
 ---
