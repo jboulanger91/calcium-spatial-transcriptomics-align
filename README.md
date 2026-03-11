@@ -1,4 +1,4 @@
-# Multimodal volumetric stack registration (Napari + BigStream local + SLURM cluster)
+# Multimodal volumetric stack registration
 
 ![Aligned sections after montage registration](aligned_sections.png)
 
@@ -23,23 +23,17 @@ Pipeline:
 
 ## Repository contents
 
-### `pre-processing/napari_pre-alignment.py`
+#### `pre-processing/napari_pre-alignment.py`
 Interactive Napari tool to rotate/flip stacks for consistent orientation.
 
-### `pre-processing/annotate_damaged_sections.py`
+#### `pre-processing/annotate_damaged_sections.py`
 Napari-based QC tool to flag damaged stacks and select `best_z`. Generates `section_annotations.tsv` and a PDF summary.
 
-### `pre-processing/montage_register_prealigned.py`
+#### `pre-processing/montage_register_prealigned.py`
 Builds a reference montage from the longest contiguous run of non-damaged sections, trimming around `best_z` and concatenating along Z.
 
-### `BigStream_register_*.py`
-Global + distributed piecewise registration drivers using BigStream (local workstation or SLURM cluster). Writes:
-- warped volumes
-- ImageJ-ready 2-channel overlays
-- timestamped JSON configs (paths + steps + blocksize/overlap + spacing)
-
-### `slurm/`
-SLURM job scripts to run BigStream registration on the cluster (staging fixed/moving + convoluted stacks to $TMPDIR, setting thread env vars, launching the Python driver).
+#### `BigStream_register_*.py`
+Global + distributed piecewise registration drivers using BigStream (notebook on a local workstation or SLURM cluster). Writes:
 
 ---
 
@@ -78,38 +72,9 @@ python3 pre-processing/montage_register_prealigned.py
 
 Builds a clean reference volume from non-damaged stacks.
 
----
-
 ### 4) Register volumes with BigStream (local or SLURM)
 
-Local (interactive / workstation):
-
-```bash
-# run one of the registration drivers
-python3 BigStream_register_cluster.py \
-  --fixed /path/to/fixed.tif \
-  --moving /path/to/moving.tif \
-  --out-dir /path/to/output \
-  --run-id exp_001_fish2
 ```
-
-SLURM cluster:
-
-```bash
-# submit the BigStream job (see slurm/ scripts for cluster-specific resources)
-sbatch slurm/run_bigstream_register.sbatch \
-  --fixed  /path/to/fixed.tif \
-  --moving /path/to/moving.tif \
-  --fixed-convoluted  /path/to/fixed_convoluted.tif \
-  --moving-convoluted /path/to/moving_convoluted.tif \
-  --out-dir /path/to/output \
-  --run-id exp_001_fish2
-```
-
-Notes:
-- RAW stacks are used for masks + global alignment; convoluted stacks are used for piecewise refinement.
-- Outputs include overlays (global + piecewise) and JSON configs for reproducibility.
-
 ---
 
 ## Environment
