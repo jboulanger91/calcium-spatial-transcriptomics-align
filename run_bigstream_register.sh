@@ -82,7 +82,7 @@ export OUTDIR
 export WORKDIR
 
 echo "Starting BigStream overlay pipeline"
-python3 -u "${SLURM_SUBMIT_DIR}/BigStream_register_cluster_base.py" \
+python3 -u "${SLURM_SUBMIT_DIR}/BigStream_register_cluster.py" \
   --fixed "${WORKDIR}/fixed.tif" \
   --moving "${WORKDIR}/moving.tif" \
   --out-dir "${OUTDIR}" \

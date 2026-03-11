@@ -1,62 +1,45 @@
-# Multimodal volumetric stack registration (Napari + BigStream)
+# Multimodal volumetric stack registration (Napari + BigStream local + SLURM cluster)
 
 ![Aligned sections after montage registration](aligned_sections.png)
-*Example output of the montage step, showing multiple adjacent sections aligned prior to volumetric registration.*
 
 ---
 
-## Overview of the workflow
+## Overview
 
-**Input:** multi-channel 3D TIFF stacks from immunostained OCT-embedded cryosection (e.g. Olympus OIR converted to TIFF)
+**Input:** multi-channel 3D TIFF stacks (e.g. Olympus OIR → TIFF)
 
 **Output:**
-- registered NIfTI volumes (fixed ↔ moving)
-- ImageJ-ready 2‑channel QC overlays
-- timestamped JSON records capturing the exact parameters used
+- registered volumes
+- ImageJ-ready 2‑channel overlays
+- JSON files recording parameters
 
-Pipeline steps:
-1. **Pre-alignment (Napari, local)** — enforce consistent orientation across stacks.
-2. **QC & annotation (Napari, local)** — mark damaged sections and select an optimal Z slice (best_z) per section.
-3. **Volume registration (BigStream, local/cluster)** — apply global + piecewise transforms and export QC overlays + metadata.
+Pipeline:
+1. Pre-align stacks (Napari)
+2. Annotate damaged sections + select `best_z`
+3. Build montage reference volume
+4. Register volumes with BigStream (global + distributed piecewise; local or SLURM)
 
 ---
 
 ## Repository contents
 
 ### `pre-processing/napari_pre-alignment.py`
-Interactive Napari tool to quickly rotate and flip OCT sub-stacks along the rostro–caudal axis.
+Interactive Napari tool to rotate/flip stacks for consistent orientation.
 
 ### `pre-processing/annotate_damaged_sections.py`
-Interactive QC + annotation utility (Napari + PDF):
-
-- **Step 1 (interactive, Napari)**:
-  - open each pre-aligned sub-stack
-  - annotate whether the stack is **damaged** or **good**
-  - for good stacks, select the **best Z slice** (`best_z`) with the strongest signal
-    (this slice is later used for montage alignment)
-
-- **Step 2 (report)**:
-  - generate a PDF QC report showing:
-    - damaged stacks shaded in red
-    - the longest consecutive run of non-damaged stacks outlined in yellow
-    - thumbnails taken from the annotated `best_z` slice
-      (fallback to the middle slice if not annotated)
-
-Annotations are saved to **`section_annotations.tsv`**.
-`damaged_stacks.txt` is automatically kept in sync for backwards compatibility.
+Napari-based QC tool to flag damaged stacks and select `best_z`. Generates `section_annotations.tsv` and a PDF summary.
 
 ### `pre-processing/montage_register_prealigned.py`
-Builds a clean reference volume from multiple adjacent stacks:
-
-- selects the **longest contiguous run of non-damaged sections** (from `section_annotations.tsv`)
-- trims each stack to a fixed Z-window around **`best_z`**
-- concatenates aligned blocks along Z to form the final montage
+Builds a reference montage from the longest contiguous run of non-damaged sections, trimming around `best_z` and concatenating along Z.
 
 ### `BigStream_register_*.py`
-Registration drivers based on **BigStream**:
-- run global + distributed piecewise alignment
-- write ImageJ-compatible 2‑channel overlays
-- write timestamped JSON configs (paths + parameters) for reproducibility
+Global + distributed piecewise registration drivers using BigStream (local workstation or SLURM cluster). Writes:
+- warped volumes
+- ImageJ-ready 2-channel overlays
+- timestamped JSON configs (paths + steps + blocksize/overlap + spacing)
+
+### `slurm/`
+SLURM job scripts to run BigStream registration on the cluster (staging fixed/moving + convoluted stacks to $TMPDIR, setting thread env vars, launching the Python driver).
 
 ---
 
@@ -64,13 +47,7 @@ Registration drivers based on **BigStream**:
 
 ### 0) Convert raw data to TIFF
 
-Raw imaging data (e.g. Olympus `.oir`) should be batch-converted to TIFF using **Fiji / ImageJ**:
-
-1. `Process → Batch → Convert…`
-2. Input: folder with `.oir`
-3. Output format: `TIFF`
-
-Bio-Formats preserves channels, Z-planes, and bit depth.
+Convert raw files (e.g. `.oir`) to TIFF using Fiji → Process → Batch → Convert.
 
 ---
 
@@ -79,8 +56,6 @@ Bio-Formats preserves channels, Z-planes, and bit depth.
 ```bash
 python pre-processing/napari_pre-alignment.py
 ```
-
-Interactively rotate/flip stacks so all volumes share a consistent orientation before automated processing.
 
 ### 2) QC and damaged-section detection
 
@@ -95,32 +70,53 @@ python3 pre-processing/annotate_damaged_sections.py report
 python3 pre-processing/annotate_damaged_sections.py all
 ```
 
-Creates/updates `section_annotations.tsv`, keeps `damaged_stacks.txt` in sync for backwards compatibility, and writes a PDF QC report.
-
 ### 3) Montage clean sections
 
 ```bash
 python3 pre-processing/montage_register_prealigned.py
 ```
 
-Builds a single, clean reference volume from the longest contiguous run of non-damaged stacks, trimming each sub-stack around the annotated `best_z` slice and using that slice for 2D rigid alignment.
+Builds a clean reference volume from non-damaged stacks.
 
 ---
 
-## References
+### 4) Register volumes with BigStream (local or SLURM)
 
-- BigStream (Janelia SciComp): https://github.com/JaneliaSciComp/bigstream
-- Marquez-Legorreta *et al.* (bioRxiv, 2026): *Whole-Brain Co-Mapping of Gene Expression and Neuronal Activity at Cellular Resolution in Behaving Zebrafish*. https://doi.org/10.64898/2026.02.07.704095
+Local (interactive / workstation):
+
+```bash
+# run one of the registration drivers
+python3 BigStream_register_cluster.py \
+  --fixed /path/to/fixed.tif \
+  --moving /path/to/moving.tif \
+  --out-dir /path/to/output \
+  --run-id exp_001_fish2
+```
+
+SLURM cluster:
+
+```bash
+# submit the BigStream job (see slurm/ scripts for cluster-specific resources)
+sbatch slurm/run_bigstream_register.sbatch \
+  --fixed  /path/to/fixed.tif \
+  --moving /path/to/moving.tif \
+  --fixed-convoluted  /path/to/fixed_convoluted.tif \
+  --moving-convoluted /path/to/moving_convoluted.tif \
+  --out-dir /path/to/output \
+  --run-id exp_001_fish2
+```
+
+Notes:
+- RAW stacks are used for masks + global alignment; convoluted stacks are used for piecewise refinement.
+- Outputs include overlays (global + piecewise) and JSON configs for reproducibility.
 
 ---
 
 ## Environment
 
-A Conda environment file is provided:
-
 ```bash
-conda env create -f stx-py310.yaml
-conda activate stx-py310
+conda activate bigstream
+pip install bigstream
 ```
 
 ---
