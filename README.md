@@ -33,7 +33,17 @@ Napari-based QC tool to flag damaged stacks and select `best_z`. Generates `sect
 Builds a reference montage from the longest contiguous run of non-damaged sections, trimming around `best_z` and concatenating along Z.
 
 #### `BigStream_register_*.py`
-Global + distributed piecewise registration drivers using BigStream (notebook on a local workstation or SLURM cluster). Writes:
+Global + distributed piecewise registration drivers using **BigStream** (local workstation or SLURM cluster). Writes:
+- warped volumes
+- ImageJ-ready 2‑channel overlays
+- timestamped JSON configs (paths + parameters)
+
+---
+
+## References
+
+- BigStream (Janelia SciComp): https://github.com/JaneliaSciComp/bigstream
+- Marquez-Legorreta *et al.* (2026). *Whole-Brain Co-Mapping of Gene Expression and Neuronal Activity at Cellular Resolution in Behaving Zebrafish*. bioRxiv 2026.02.07.704095. https://doi.org/10.64898/2026.02.07.704095
 
 ---
 
