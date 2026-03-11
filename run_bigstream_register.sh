@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# CircuitSeeker multimodal registration on MCMeSU (MeSU cluster)
+# BigStream overlay (rigid+affine) on MCMeSU (MeSU cluster)
 #
 
-#SBATCH --job-name=cs_reg
+#SBATCH --job-name=bs_overlay
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --mail-user=jonathan.boulanger@inserm.fr
@@ -25,8 +25,6 @@ cd "$SLURM_SUBMIT_DIR"
 # ----------------------------
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${SLURM_CPUS_PER_TASK}
-
-# Optional: keep numpy/BLAS from oversubscribing threads
 export OPENBLAS_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 export NUMEXPR_NUM_THREADS=${SLURM_CPUS_PER_TASK}
@@ -40,36 +38,25 @@ echo "Node:          ${HOSTNAME}"
 echo "CPUs/task:     ${SLURM_CPUS_PER_TASK}"
 echo "TMPDIR:        ${TMPDIR}"
 echo "Submit dir:    ${SLURM_SUBMIT_DIR}"
-echo "SCRATCH:       ${SCRATCH}"
-echo "STORE:         ${STORE}"
+echo "SCRATCH:       ${SCRATCH:-}" 
+echo "STORE:         ${STORE:-}" 
 
 # ----------------------------
 # (Optional) Environment setup
 # ----------------------------
-# If you use a venv/conda, uncomment and adjust:
-# source "${SLURM_SUBMIT_DIR}/venv/bin/activate"
-# or:
 # module load python/3.10
+# source "${SLURM_SUBMIT_DIR}/venv/bin/activate"
 
-# Quick sanity: show python + key deps if you want
 python3 -c "import sys; print('[debug] python:', sys.executable); print('[debug] version:', sys.version.split()[0])"
 
 # ----------------------------
 # Define inputs / outputs
 # ----------------------------
-# EDIT these to match where you put the TIFFs on MCMeSU (SCRATCH/STORE/submit dir).
 DATADIR="${SLURM_SUBMIT_DIR}/data"
-OUTDIR="${SLURM_SUBMIT_DIR}/CircuitSeeker_output"
+OUTDIR="${SLURM_SUBMIT_DIR}/BigStream_output"
 
 FIXED="${DATADIR}/exp_001_fish2_s07_pre_GCaMP_cropped.tif"
-MOVING="${DATADIR}/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz_enh.tif"
-
-EXP_ID="exp_001"
-FISH="2"
-
-# Spacing (microns), order: X Y Z
-FIXED_SPACING=(0.621 0.621 1.0)
-MOVING_SPACING=(0.396 0.396 2.0)
+MOVING="${DATADIR}/2025-10-13_16-04-47_fish002_setup1_arena0_MW_preprocessed_data_repeat00_tile000_950nm_0_flippedxz_CARE.tif"
 
 mkdir -p "${OUTDIR}"
 
@@ -80,7 +67,7 @@ ls -l "${MOVING}" || { echo "[ERROR] Moving TIFF not found: ${MOVING}"; exit 1; 
 # ----------------------------
 # Stage data to local disk
 # ----------------------------
-WORKDIR="${TMPDIR}/cs_${SLURM_JOB_ID}"
+WORKDIR="${TMPDIR}/bs_${SLURM_JOB_ID}"
 mkdir -p "${WORKDIR}"
 
 echo "Staging data to ${WORKDIR}"
@@ -88,30 +75,18 @@ cp "${FIXED}"  "${WORKDIR}/fixed.tif"
 cp "${MOVING}" "${WORKDIR}/moving.tif"
 
 # ----------------------------
-# Run CircuitSeeker registration
+# Run BigStream overlay export
 # ----------------------------
-echo "Starting CircuitSeeker registration"
+export DATADIR
+export OUTDIR
+export WORKDIR
 
-python3 "${SLURM_SUBMIT_DIR}/circuitseeker_multimodal_registration_slurm.py" \
+echo "Starting BigStream overlay pipeline"
+python3 -u "${SLURM_SUBMIT_DIR}/BigStream_register_cluster_base.py" \
   --fixed "${WORKDIR}/fixed.tif" \
   --moving "${WORKDIR}/moving.tif" \
-  --fixed-spacing-um  "${FIXED_SPACING[@]}" \
-  --moving-spacing-um "${MOVING_SPACING[@]}" \
-  --exp-id "${EXP_ID}" \
-  --fish "${FISH}" \
   --out-dir "${OUTDIR}" \
-  --pad-um 20 \
-  --save-padded-tiffs \
-  --mask-sigma 2 \
-  --mask-dilate-iter 32 \
-  --mask-close-shape 5 5 5 \
-  --alignment-spacing 2 \
-  --shrink-factors 2 \
-  --smooth-sigmas 8 \
-  --iterations 2000 \
-  --control-point-spacing 8 \
-  --control-point-levels 1 2 4 8 16 32 64 \
-  --verbose
+  --run-id "exp_001_fish2"
 
-echo "CircuitSeeker registration finished"
+echo "BigStream overlay finished"
 exit 0

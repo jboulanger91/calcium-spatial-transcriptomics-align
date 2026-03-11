@@ -1,6 +1,6 @@
 # Ignore generated outputs and local data
 /output/
 /data/
-/CircuitSeeker_cluster/
+/CircuitSeeker/
 /Bigstream_cluster/
 /ANTs_cluster/
