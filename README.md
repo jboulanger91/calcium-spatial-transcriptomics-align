@@ -1,4 +1,4 @@
-# Multimodal volumetric stack registration
+# Multimodal volumetric registration
 
 ![Aligned sections after montage registration](aligned_sections.png)
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-**Input:** multi-channel 3D TIFF stacks (e.g. Olympus OIR → TIFF)
+**Input:** multi-channel 3D TIFF stacks from OCT sections (immunostained) and two‑photon calcium imaging brain volumes. 
 
 **Output:**
 - registered volumes
